@@ -221,6 +221,31 @@ impl ExpenseManager {
         }
         false
     }
+
+    pub fn copy_expense_to_next_month(&mut self, year: i32, month: u32, index: usize) -> bool {
+        let key = Self::get_key(year, month);
+        let expense_to_copy = if let Some(expenses) = self.expenses.get(&key) {
+            expenses.get(index).cloned()
+        } else {
+            None
+        };
+        
+        if let Some(expense) = expense_to_copy {
+            let (next_year, next_month) = if month == 12 {
+                (year + 1, 1)
+            } else {
+                (year, month + 1)
+            };
+            
+            let mut copied_expense = expense.clone();
+            copied_expense.is_paid = false;
+            
+            self.add_expense(next_year, next_month, copied_expense);
+            log_message(&format!("Copied expense '{}' to {}-{:02}", expense.description, next_year, next_month));
+            return true;
+        }
+        false
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -300,11 +325,17 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                         .get_month_expenses(app.current_year, app.current_month)
                         .unwrap_or(&empty_vec);
 
-                    let items: Vec<Row> = expenses
+                    let mut sorted_expenses: Vec<(usize, &Expense)> = expenses
                         .iter()
                         .enumerate()
-                        .map(|(i, expense)| {
-                            let style = if Some(i) == app.selected_expense {
+                        .collect();
+                    sorted_expenses.sort_by(|a, b| a.1.description.to_lowercase().cmp(&b.1.description.to_lowercase()));
+
+                    let items: Vec<Row> = sorted_expenses
+                        .iter()
+                        .enumerate()
+                        .map(|(display_idx, (original_idx, expense))| {
+                            let style = if Some(display_idx) == app.selected_expense {
                                 Style::default().fg(Color::Yellow)
                             } else {
                                 Style::default()
@@ -334,7 +365,7 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
 
                     f.render_widget(table, chunks[1]);
 
-                    let help_text = "[h/l] Change Month | [j/k] Select | [i] Add | [Space] Toggle Paid | [d] Delete | [o] Overview | [q] Quit";
+                    let help_text = "[h/l] Change Month | [j/k] Select | [i] Add | [Space] Toggle Paid | [d] Delete | [c] Copy to Next | [o] Overview | [q] Quit";
                     let status = Paragraph::new(help_text)
                         .block(Block::default().borders(Borders::ALL));
                     f.render_widget(status, chunks[2]);
@@ -613,14 +644,30 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                     }
                     KeyCode::Char(' ') => {
                         if matches!(app.app_mode, AppMode::List) {
-                            if let Some(selected) = app.selected_expense {
-                                if let Some(expenses) = app.expense_manager
-                                    .get_month_expenses_mut(app.current_year, app.current_month)
+                            if let Some(selected_display_idx) = app.selected_expense {
+                                let original_idx = if let Some(expenses) = app.expense_manager
+                                    .get_month_expenses(app.current_year, app.current_month)
                                 {
-                                    if let Some(expense) = expenses.get_mut(selected) {
-                                        expense.toggle_paid();
-                                        if let Err(e) = app.expense_manager.save() {
-                                            log_message(&format!("Failed to save after toggling paid status: {}", e));
+                                    let mut sorted_expenses: Vec<(usize, &Expense)> = expenses
+                                        .iter()
+                                        .enumerate()
+                                        .collect();
+                                    sorted_expenses.sort_by(|a, b| a.1.description.to_lowercase().cmp(&b.1.description.to_lowercase()));
+                                    
+                                    sorted_expenses.get(selected_display_idx).map(|(idx, _)| *idx)
+                                } else {
+                                    None
+                                };
+                                
+                                if let Some(original_idx) = original_idx {
+                                    if let Some(expenses_mut) = app.expense_manager
+                                        .get_month_expenses_mut(app.current_year, app.current_month)
+                                    {
+                                        if let Some(expense) = expenses_mut.get_mut(original_idx) {
+                                            expense.toggle_paid();
+                                            if let Err(e) = app.expense_manager.save() {
+                                                log_message(&format!("Failed to save after toggling paid status: {}", e));
+                                            }
                                         }
                                     }
                                 }
@@ -629,24 +676,69 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                     }
                     KeyCode::Char('d') => {
                         if matches!(app.app_mode, AppMode::List) {
-                            if let Some(selected) = app.selected_expense {
-                                if app.expense_manager.delete_expense(
-                                    app.current_year,
-                                    app.current_month,
-                                    selected
-                                ) {
-                                    let new_len = app.expense_manager
-                                        .get_month_expenses(app.current_year, app.current_month)
-                                        .map(|e| e.len())
-                                        .unwrap_or(0);
+                            if let Some(selected_display_idx) = app.selected_expense {
+                                let original_idx = if let Some(expenses) = app.expense_manager
+                                    .get_month_expenses(app.current_year, app.current_month)
+                                {
+                                    let mut sorted_expenses: Vec<(usize, &Expense)> = expenses
+                                        .iter()
+                                        .enumerate()
+                                        .collect();
+                                    sorted_expenses.sort_by(|a, b| a.1.description.to_lowercase().cmp(&b.1.description.to_lowercase()));
                                     
-                                    if new_len == 0 {
-                                        app.selected_expense = None;
-                                    } else if selected >= new_len {
-                                        app.selected_expense = Some(new_len - 1);
+                                    sorted_expenses.get(selected_display_idx).map(|(idx, _)| *idx)
+                                } else {
+                                    None
+                                };
+                                
+                                if let Some(original_idx) = original_idx {
+                                    if app.expense_manager.delete_expense(
+                                        app.current_year,
+                                        app.current_month,
+                                        original_idx
+                                    ) {
+                                        let new_len = app.expense_manager
+                                            .get_month_expenses(app.current_year, app.current_month)
+                                            .map(|e| e.len())
+                                            .unwrap_or(0);
+                                        
+                                        if new_len == 0 {
+                                            app.selected_expense = None;
+                                        } else if selected_display_idx >= new_len {
+                                            app.selected_expense = Some(new_len - 1);
+                                        }
+                                        
+                                        log_message(&format!("Deleted expense at original index {}", original_idx));
                                     }
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Char('c') => {
+                        if matches!(app.app_mode, AppMode::List) {
+                            if let Some(selected_display_idx) = app.selected_expense {
+                                let original_idx = if let Some(expenses) = app.expense_manager
+                                    .get_month_expenses(app.current_year, app.current_month)
+                                {
+                                    let mut sorted_expenses: Vec<(usize, &Expense)> = expenses
+                                        .iter()
+                                        .enumerate()
+                                        .collect();
+                                    sorted_expenses.sort_by(|a, b| a.1.description.to_lowercase().cmp(&b.1.description.to_lowercase()));
                                     
-                                    log_message(&format!("Deleted expense at index {}", selected));
+                                    sorted_expenses.get(selected_display_idx).map(|(idx, _)| *idx)
+                                } else {
+                                    None
+                                };
+                                
+                                if let Some(original_idx) = original_idx {
+                                    if app.expense_manager.copy_expense_to_next_month(
+                                        app.current_year,
+                                        app.current_month,
+                                        original_idx
+                                    ) {
+                                        log_message(&format!("Copied expense at original index {} to next month", original_idx));
+                                    }
                                 }
                             }
                         }
