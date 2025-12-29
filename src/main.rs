@@ -207,6 +207,20 @@ impl ExpenseManager {
             })
             .unwrap_or(0.0)
     }
+
+    pub fn delete_expense(&mut self, year: i32, month: u32, index: usize) -> bool {
+        let key = Self::get_key(year, month);
+        if let Some(expenses) = self.expenses.get_mut(&key) {
+            if index < expenses.len() {
+                expenses.remove(index);
+                if let Err(e) = self.save() {
+                    log_message(&format!("Failed to save after deleting expense: {}", e));
+                }
+                return true;
+            }
+        }
+        false
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -320,7 +334,7 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
 
                     f.render_widget(table, chunks[1]);
 
-                    let help_text = "[h/l] Change Month | [j/k] Select | [i] Add | [Space] Toggle Paid | [o] Overview | [q] Quit";
+                    let help_text = "[h/l] Change Month | [j/k] Select | [i] Add | [Space] Toggle Paid | [d] Delete | [o] Overview | [q] Quit";
                     let status = Paragraph::new(help_text)
                         .block(Block::default().borders(Borders::ALL));
                     f.render_widget(status, chunks[2]);
@@ -609,6 +623,30 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                                             log_message(&format!("Failed to save after toggling paid status: {}", e));
                                         }
                                     }
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Char('d') => {
+                        if matches!(app.app_mode, AppMode::List) {
+                            if let Some(selected) = app.selected_expense {
+                                if app.expense_manager.delete_expense(
+                                    app.current_year,
+                                    app.current_month,
+                                    selected
+                                ) {
+                                    let new_len = app.expense_manager
+                                        .get_month_expenses(app.current_year, app.current_month)
+                                        .map(|e| e.len())
+                                        .unwrap_or(0);
+                                    
+                                    if new_len == 0 {
+                                        app.selected_expense = None;
+                                    } else if selected >= new_len {
+                                        app.selected_expense = Some(new_len - 1);
+                                    }
+                                    
+                                    log_message(&format!("Deleted expense at index {}", selected));
                                 }
                             }
                         }
