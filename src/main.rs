@@ -266,6 +266,7 @@ enum AppMode {
     Overview,
     History,
     AddBalance,
+    ConfirmDelete,
 }
 
 struct App {
@@ -278,6 +279,8 @@ struct App {
     input_description: String,
     input_amount: String,
     input_balance: String,
+    pending_delete_index: Option<usize>,
+    pending_delete_description: String,
 }
 
 impl App {
@@ -293,6 +296,8 @@ impl App {
             input_description: String::new(),
             input_amount: String::new(),
             input_balance: String::new(),
+            pending_delete_index: None,
+            pending_delete_description: String::new(),
         }
     }
 }
@@ -306,9 +311,10 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                         .direction(Direction::Vertical)
                         .margin(1)
                         .constraints([
-                            Constraint::Length(3),
-                            Constraint::Min(0),
-                            Constraint::Length(3),
+                            Constraint::Length(3),      // Title
+                            Constraint::Percentage(50), // Expenses table (top half)
+                            Constraint::Percentage(50), // Balance overview (bottom half)
+                            Constraint::Length(3),      // Help text
                         ].as_ref())
                         .split(f.size());
 
@@ -334,16 +340,11 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                     let items: Vec<Row> = sorted_expenses
                         .iter()
                         .enumerate()
-                        .map(|(display_idx, (original_idx, expense))| {
+                        .map(|(display_idx, (_original_idx, expense))| {
                             let style = if Some(display_idx) == app.selected_expense {
                                 Style::default().fg(Color::Yellow)
                             } else {
                                 Style::default()
-                            };
-                            let status_style = if expense.is_paid {
-                                Style::default().fg(Color::Green)
-                            } else {
-                                Style::default().fg(Color::Red)
                             };
                             Row::new(vec![
                                 expense.description.clone(),
@@ -365,10 +366,56 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
 
                     f.render_widget(table, chunks[1]);
 
-                    let help_text = "[h/l] Change Month | [j/k] Select | [i] Add | [Space] Toggle Paid | [d] Delete | [c] Copy to Next | [o] Overview | [q] Quit";
+                    // Balance overview section (bottom half)
+                    let total = app.expense_manager.get_month_total(app.current_year, app.current_month);
+                    let unpaid = app.expense_manager.get_unpaid_total(app.current_year, app.current_month);
+                    let paid = total - unpaid;
+                    let balance = app.expense_manager.get_balance();
+                    let free_money = balance - unpaid;
+                    let payment_progress = if total > 0.0 { (paid / total) * 100.0 } else { 100.0 };
+
+                    let overview_layout = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([
+                            Constraint::Percentage(50),
+                            Constraint::Percentage(50),
+                        ].as_ref())
+                        .split(chunks[2]);
+
+                    // Left column - Balance info
+                    let left_text = vec![
+                        format!("Current Balance"),
+                        format!("{:.2} PLN", balance),
+                        format!(""),
+                        format!("Free Money"),
+                        format!("{:.2} PLN", free_money),
+                    ].join("\n");
+
+                    let left_panel = Paragraph::new(left_text)
+                        .block(Block::default().borders(Borders::ALL).title("Available Funds"))
+                        .alignment(Alignment::Center)
+                        .style(Style::default().fg(Color::Cyan));
+
+                    // Right column - Expenses summary with progress
+                    let right_text = vec![
+                        format!("Total Expenses: {:.2} PLN", total),
+                        format!("Paid: {:.2} PLN", paid),
+                        format!("Unpaid: {:.2} PLN", unpaid),
+                        format!(""),
+                        format!("Payment Progress: {:.1}%", payment_progress),
+                    ].join("\n");
+
+                    let right_panel = Paragraph::new(right_text)
+                        .block(Block::default().borders(Borders::ALL).title("Monthly Summary"))
+                        .alignment(Alignment::Center);
+
+                    f.render_widget(left_panel, overview_layout[0]);
+                    f.render_widget(right_panel, overview_layout[1]);
+
+                    let help_text = "[h/l] Change Month | [j/k] Select | [i] Add | [Space] Toggle Paid | [d] Delete | [c] Copy to Next | [b] Set Balance | [q] Quit";
                     let status = Paragraph::new(help_text)
                         .block(Block::default().borders(Borders::ALL));
-                    f.render_widget(status, chunks[2]);
+                    f.render_widget(status, chunks[3]);
                 },
                 AppMode::Overview => {
                     let chunks = Layout::default()
@@ -534,6 +581,20 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                     f.render_widget(Clear, popup);
                     f.render_widget(input, popup);
                 }
+                AppMode::ConfirmDelete => {
+                    let popup = centered_rect(50, 25, f.size());
+                    let confirm_text = format!(
+                        "Delete this expense?\n\n{}\n\n[y] Yes, delete | [n] No, cancel",
+                        app.pending_delete_description
+                    );
+                    let confirm_dialog = Paragraph::new(confirm_text)
+                        .block(Block::default().borders(Borders::ALL).title(" Confirm Delete "))
+                        .alignment(Alignment::Center)
+                        .style(Style::default().fg(Color::Red));
+
+                    f.render_widget(Clear, popup);
+                    f.render_widget(confirm_dialog, popup);
+                }
             }
 
             if let InputMode::Adding(field) = app.input_mode {
@@ -677,7 +738,7 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                     KeyCode::Char('d') => {
                         if matches!(app.app_mode, AppMode::List) {
                             if let Some(selected_display_idx) = app.selected_expense {
-                                let original_idx = if let Some(expenses) = app.expense_manager
+                                let expense_info = if let Some(expenses) = app.expense_manager
                                     .get_month_expenses(app.current_year, app.current_month)
                                 {
                                     let mut sorted_expenses: Vec<(usize, &Expense)> = expenses
@@ -685,31 +746,17 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                                         .enumerate()
                                         .collect();
                                     sorted_expenses.sort_by(|a, b| a.1.description.to_lowercase().cmp(&b.1.description.to_lowercase()));
-                                    
-                                    sorted_expenses.get(selected_display_idx).map(|(idx, _)| *idx)
+
+                                    sorted_expenses.get(selected_display_idx)
+                                        .map(|(idx, exp)| (*idx, exp.description.clone()))
                                 } else {
                                     None
                                 };
-                                
-                                if let Some(original_idx) = original_idx {
-                                    if app.expense_manager.delete_expense(
-                                        app.current_year,
-                                        app.current_month,
-                                        original_idx
-                                    ) {
-                                        let new_len = app.expense_manager
-                                            .get_month_expenses(app.current_year, app.current_month)
-                                            .map(|e| e.len())
-                                            .unwrap_or(0);
-                                        
-                                        if new_len == 0 {
-                                            app.selected_expense = None;
-                                        } else if selected_display_idx >= new_len {
-                                            app.selected_expense = Some(new_len - 1);
-                                        }
-                                        
-                                        log_message(&format!("Deleted expense at original index {}", original_idx));
-                                    }
+
+                                if let Some((idx, desc)) = expense_info {
+                                    app.pending_delete_index = Some(idx);
+                                    app.pending_delete_description = desc;
+                                    app.app_mode = AppMode::ConfirmDelete;
                                 }
                             }
                         }
@@ -749,7 +796,7 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                         }
                     }
                     KeyCode::Char('b') => {
-                        if matches!(app.app_mode, AppMode::Overview) {
+                        if matches!(app.app_mode, AppMode::Overview | AppMode::List) {
                             app.app_mode = AppMode::AddBalance;
                             app.input_balance.clear();
                         }
@@ -758,7 +805,12 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                         match app.app_mode {
                             AppMode::Overview => app.app_mode = AppMode::List,
                             AppMode::History => app.app_mode = AppMode::Overview,
-                            AppMode::AddBalance => app.app_mode = AppMode::Overview,
+                            AppMode::AddBalance => app.app_mode = AppMode::List,
+                            AppMode::ConfirmDelete => {
+                                app.app_mode = AppMode::List;
+                                app.pending_delete_index = None;
+                                app.pending_delete_description.clear();
+                            }
                             _ => {}
                         }
                     }
@@ -773,7 +825,7 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                                 if let Err(e) = app.expense_manager.save() {
                                     log_message(&format!("Failed to save after setting balance: {}", e));
                                 }
-                                app.app_mode = AppMode::Overview;
+                                app.app_mode = AppMode::List;
                             }
                         }
                     }
@@ -781,6 +833,43 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                         if matches!(app.app_mode, AppMode::AddBalance) {
                             if c.is_digit(10) || c == '.' {
                                 app.input_balance.push(c);
+                            }
+                        } else if matches!(app.app_mode, AppMode::ConfirmDelete) {
+                            match c {
+                                'y' | 'Y' => {
+                                    if let Some(original_idx) = app.pending_delete_index {
+                                        let selected_display_idx = app.selected_expense;
+                                        if app.expense_manager.delete_expense(
+                                            app.current_year,
+                                            app.current_month,
+                                            original_idx
+                                        ) {
+                                            let new_len = app.expense_manager
+                                                .get_month_expenses(app.current_year, app.current_month)
+                                                .map(|e| e.len())
+                                                .unwrap_or(0);
+
+                                            if new_len == 0 {
+                                                app.selected_expense = None;
+                                            } else if let Some(sel_idx) = selected_display_idx {
+                                                if sel_idx >= new_len {
+                                                    app.selected_expense = Some(new_len - 1);
+                                                }
+                                            }
+
+                                            log_message(&format!("Deleted expense at original index {}", original_idx));
+                                        }
+                                    }
+                                    app.app_mode = AppMode::List;
+                                    app.pending_delete_index = None;
+                                    app.pending_delete_description.clear();
+                                }
+                                'n' | 'N' => {
+                                    app.app_mode = AppMode::List;
+                                    app.pending_delete_index = None;
+                                    app.pending_delete_description.clear();
+                                }
+                                _ => {}
                             }
                         }
                     }
