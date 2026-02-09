@@ -70,8 +70,8 @@ impl Expense {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExpenseManager {
     expenses: HashMap<String, Vec<Expense>>,
-    balance: f64,
-    balance_history: Vec<BalanceLog>,
+    balances: HashMap<String, f64>,
+    balance_history: HashMap<String, Vec<BalanceLog>>,
 }
 
 impl ExpenseManager {
@@ -85,8 +85,8 @@ impl ExpenseManager {
                 log_message(&format!("Failed to load data: {}. Starting fresh.", e));
                 Self {
                     expenses: HashMap::new(),
-                    balance: 0.0,
-                    balance_history: Vec::new(),
+                    balances: HashMap::new(),
+                    balance_history: HashMap::new(),
                 }
             }
         }
@@ -137,18 +137,23 @@ impl ExpenseManager {
     }
 
     pub fn set_balance(&mut self, balance: f64, year: i32, month: u32) {
-        self.balance = balance;
+        let key = Self::get_key(year, month);
+        self.balances.insert(key.clone(), balance);
+
         let total = self.get_month_total(year, month);
         let unpaid = self.get_unpaid_total(year, month);
         let remaining = balance - unpaid;
 
-        self.balance_history.push(BalanceLog {
-            timestamp: Local::now(),
-            balance,
-            total_expenses: total,
-            unpaid_expenses: unpaid,
-            remaining,
-        });
+        self.balance_history
+            .entry(key)
+            .or_insert_with(Vec::new)
+            .push(BalanceLog {
+                timestamp: Local::now(),
+                balance,
+                total_expenses: total,
+                unpaid_expenses: unpaid,
+                remaining,
+            });
 
         if let Err(e) = self.save() {
             log_message(&format!("Failed to save after setting balance: {}", e));
@@ -167,12 +172,15 @@ impl ExpenseManager {
         }
     }
 
-    pub fn get_balance(&self) -> f64 {
-        self.balance
+    pub fn get_balance(&self, year: i32, month: u32) -> f64 {
+        let key = Self::get_key(year, month);
+        self.balances.get(&key).copied().unwrap_or(0.0)
     }
 
-    pub fn get_balance_history(&self) -> &Vec<BalanceLog> {
-        &self.balance_history
+    pub fn get_balance_history(&self, year: i32, month: u32) -> &Vec<BalanceLog> {
+        let key = Self::get_key(year, month);
+        static EMPTY: Vec<BalanceLog> = Vec::new();
+        self.balance_history.get(&key).unwrap_or(&EMPTY)
     }
 
     pub fn get_month_expenses(&self, year: i32, month: u32) -> Option<&Vec<Expense>> {
@@ -370,7 +378,7 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                     let total = app.expense_manager.get_month_total(app.current_year, app.current_month);
                     let unpaid = app.expense_manager.get_unpaid_total(app.current_year, app.current_month);
                     let paid = total - unpaid;
-                    let balance = app.expense_manager.get_balance();
+                    let balance = app.expense_manager.get_balance(app.current_year, app.current_month);
                     let free_money = balance - unpaid;
                     let payment_progress = if total > 0.0 { (paid / total) * 100.0 } else { 100.0 };
 
@@ -445,7 +453,7 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                     let total = app.expense_manager.get_month_total(app.current_year, app.current_month);
                     let unpaid = app.expense_manager.get_unpaid_total(app.current_year, app.current_month);
                     let paid = total - unpaid;
-                    let balance = app.expense_manager.get_balance();
+                    let balance = app.expense_manager.get_balance(app.current_year, app.current_month);
                     let free_money = balance - unpaid;
                     let payment_progress = if total > 0.0 { (paid / total) * 100.0 } else { 100.0 };
 
@@ -534,7 +542,7 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                         .block(Block::default().borders(Borders::ALL));
                     f.render_widget(title, chunks[0]);
 
-                    let history = app.expense_manager.get_balance_history();
+                    let history = app.expense_manager.get_balance_history(app.current_year, app.current_month);
                     let items: Vec<Row> = history.iter().map(|log| {
                         Row::new(vec![
                             log.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
