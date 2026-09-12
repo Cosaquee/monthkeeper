@@ -11,7 +11,8 @@ use std::io::{self, Write};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect, Alignment},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph, Row, Table, Clear},
     Terminal,
 };
@@ -65,7 +66,6 @@ impl Category {
             Category::Want => Category::Need,
         }
     }
-
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,9 +248,7 @@ impl ExpenseManager {
         let key = Self::get_key(year, month);
         self.expenses
             .get(&key)
-            .map(|expenses| {
-                expenses.iter().map(|e| e.amount).sum()
-            })
+            .map(|expenses| expenses.iter().map(|e| e.amount).sum())
             .unwrap_or(0.0)
     }
 
@@ -307,8 +305,6 @@ impl ExpenseManager {
     }
 }
 
-// Returns expenses sorted needs-first then wants, each group sorted alphabetically.
-// The usize is the original index in the backing Vec for mutations.
 fn sorted_expenses_grouped(expenses: &[Expense]) -> Vec<(usize, &Expense)> {
     let mut needs: Vec<(usize, &Expense)> = expenses.iter().enumerate()
         .filter(|(_, e)| e.category == Category::Need)
@@ -321,6 +317,12 @@ fn sorted_expenses_grouped(expenses: &[Expense]) -> Vec<(usize, &Expense)> {
     wants.sort_by(|a, b| a.1.description.to_lowercase().cmp(&b.1.description.to_lowercase()));
 
     needs.into_iter().chain(wants.into_iter()).collect()
+}
+
+fn render_bar(percent: f64, width: usize) -> String {
+    let filled = ((percent / 100.0) * width as f64).round() as usize;
+    let filled = filled.min(width);
+    format!("{}{}", "█".repeat(filled), "░".repeat(width - filled))
 }
 
 #[derive(Copy, Clone)]
@@ -389,73 +391,106 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                         .direction(Direction::Vertical)
                         .margin(1)
                         .constraints([
-                            Constraint::Length(3),      // Title
-                            Constraint::Percentage(50), // Expenses table
-                            Constraint::Percentage(50), // Balance overview
-                            Constraint::Length(3),      // Help text
+                            Constraint::Length(3),
+                            Constraint::Min(0),
+                            Constraint::Length(3),
                         ].as_ref())
                         .split(f.size());
 
+                    // Title: centred month + nav hints
                     let month_names = ["January", "February", "March", "April", "May", "June",
                                      "July", "August", "September", "October", "November", "December"];
                     let month_name = month_names[app.current_month as usize - 1];
-                    let month_year = format!("{} {}", month_name, app.current_year);
-                    let title = Paragraph::new(month_year)
-                        .block(Block::default().borders(Borders::ALL).title("Current Period"));
+                    let title_text = format!("◄  {} {}  ►", month_name, app.current_year);
+                    let title = Paragraph::new(title_text)
+                        .block(Block::default().borders(Borders::ALL)
+                            .border_style(Style::default().fg(Color::Cyan)))
+                        .alignment(Alignment::Center)
+                        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
                     f.render_widget(title, chunks[0]);
+
+                    // Main area: expense list + sidebar
+                    let content = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([
+                            Constraint::Percentage(65),
+                            Constraint::Percentage(35),
+                        ].as_ref())
+                        .split(chunks[1]);
+
+                    // ── Expense table ──────────────────────────────────────────
 
                     let empty_vec = Vec::new();
                     let expenses = app.expense_manager
                         .get_month_expenses(app.current_year, app.current_month)
                         .unwrap_or(&empty_vec);
-
                     let sorted = sorted_expenses_grouped(expenses);
                     let n_needs = sorted.iter().filter(|(_, e)| e.category == Category::Need).count();
 
-                    let mut items: Vec<Row> = Vec::new();
+                    let dim = Style::default().fg(Color::DarkGray);
+                    let selected_style = Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD);
 
-                    items.push(Row::new(vec!["── Needs ──", "", ""])
-                        .style(Style::default().fg(Color::Green)));
-                    for (i, (_orig, expense)) in sorted[..n_needs].iter().enumerate() {
-                        let style = if Some(i) == app.selected_expense {
-                            Style::default().fg(Color::Yellow)
+                    let mut rows: Vec<Row> = Vec::new();
+
+                    // Needs section
+                    rows.push(Row::new(vec!["▸ NEEDS", "", ""])
+                        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+                    for (i, (_, expense)) in sorted[..n_needs].iter().enumerate() {
+                        let selected = Some(i) == app.selected_expense;
+                        let base = if selected {
+                            selected_style
+                        } else if expense.is_paid {
+                            dim
                         } else {
                             Style::default()
                         };
-                        items.push(Row::new(vec![
-                            expense.description.clone(),
+                        let prefix = if selected { "▶ " } else { "  " };
+                        let status = if expense.is_paid { "✓  paid" } else { "✗  due " };
+                        rows.push(Row::new(vec![
+                            format!("{}{}", prefix, expense.description),
                             format!("{:.2}", expense.amount),
-                            if expense.is_paid { "✓" } else { "✗" }.to_string(),
-                        ]).style(style));
+                            status.to_string(),
+                        ]).style(base));
                     }
 
-                    items.push(Row::new(vec!["── Wants ──", "", ""])
-                        .style(Style::default().fg(Color::Magenta)));
-                    for (i, (_orig, expense)) in sorted[n_needs..].iter().enumerate() {
-                        let style = if app.selected_expense == Some(i + n_needs) {
-                            Style::default().fg(Color::Yellow)
+                    // Wants section
+                    rows.push(Row::new(vec!["▸ WANTS", "", ""])
+                        .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+                    for (i, (_, expense)) in sorted[n_needs..].iter().enumerate() {
+                        let selected = app.selected_expense == Some(i + n_needs);
+                        let base = if selected {
+                            selected_style
+                        } else if expense.is_paid {
+                            dim
                         } else {
                             Style::default()
                         };
-                        items.push(Row::new(vec![
-                            expense.description.clone(),
+                        let prefix = if selected { "▶ " } else { "  " };
+                        let status = if expense.is_paid { "✓  paid" } else { "✗  due " };
+                        rows.push(Row::new(vec![
+                            format!("{}{}", prefix, expense.description),
                             format!("{:.2}", expense.amount),
-                            if expense.is_paid { "✓" } else { "✗" }.to_string(),
-                        ]).style(style));
+                            status.to_string(),
+                        ]).style(base));
                     }
 
-                    let table = Table::new(items)
-                        .header(Row::new(vec!["Description", "Amount", "St"]).style(Style::default().fg(Color::Cyan)))
-                        .block(Block::default().borders(Borders::ALL).title("Monthly Expenses"))
+                    let table = Table::new(rows)
+                        .header(
+                            Row::new(vec!["  Expense", "Amount", "Status"])
+                                .style(dim)
+                        )
+                        .block(Block::default().borders(Borders::ALL).title(" Expenses "))
                         .widths(&[
-                            Constraint::Percentage(55),
-                            Constraint::Percentage(30),
-                            Constraint::Percentage(15),
+                            Constraint::Percentage(52),
+                            Constraint::Percentage(24),
+                            Constraint::Percentage(24),
                         ]);
+                    f.render_widget(table, content[0]);
 
-                    f.render_widget(table, chunks[1]);
+                    // ── Sidebar ────────────────────────────────────────────────
 
-                    // Balance overview section (bottom half)
                     let total = app.expense_manager.get_month_total(app.current_year, app.current_month);
                     let needs_total = app.expense_manager.get_needs_total(app.current_year, app.current_month);
                     let wants_total = app.expense_manager.get_wants_total(app.current_year, app.current_month);
@@ -464,57 +499,109 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                     let balance = app.expense_manager.get_balance(app.current_year, app.current_month);
                     let free_money = balance - unpaid;
                     let payment_progress = if total > 0.0 { (paid / total) * 100.0 } else { 100.0 };
+                    let needs_pct = if total > 0.0 { (needs_total / total) * 100.0 } else { 0.0 };
+                    let wants_pct = if total > 0.0 { (wants_total / total) * 100.0 } else { 0.0 };
 
-                    let overview_layout = Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([
-                            Constraint::Percentage(50),
-                            Constraint::Percentage(50),
-                        ].as_ref())
-                        .split(chunks[2]);
+                    let bar_w = 16usize;
+                    let free_color = if free_money >= 0.0 { Color::Green } else { Color::Red };
+                    let progress_color = if payment_progress >= 80.0 { Color::Green }
+                        else if payment_progress >= 50.0 { Color::Yellow }
+                        else { Color::Red };
 
-                    let left_text = vec![
-                        format!("Current Balance"),
-                        format!("{:.2} PLN", balance),
-                        format!(""),
-                        format!("Free Money"),
-                        format!("{:.2} PLN", free_money),
-                    ].join("\n");
+                    let label = |s: &str| -> Line {
+                        Line::from(Span::styled(s.to_string(), dim))
+                    };
+                    let divider = || -> Line {
+                        Line::from(Span::styled("─────────────────────".to_string(), dim))
+                    };
+                    let blank = || -> Line { Line::from("") };
 
-                    let left_panel = Paragraph::new(left_text)
-                        .block(Block::default().borders(Borders::ALL).title("Available Funds"))
-                        .alignment(Alignment::Center)
-                        .style(Style::default().fg(Color::Cyan));
+                    let sidebar_text = Text::from(vec![
+                        label("Balance"),
+                        Line::from(Span::styled(
+                            format!("{:.2} PLN", balance),
+                            Style::default().add_modifier(Modifier::BOLD),
+                        )),
+                        blank(),
+                        label("Free Money"),
+                        Line::from(Span::styled(
+                            format!("{:.2} PLN", free_money),
+                            Style::default().fg(free_color).add_modifier(Modifier::BOLD),
+                        )),
+                        blank(),
+                        divider(),
+                        blank(),
+                        Line::from(Span::styled(
+                            "Needs",
+                            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        )),
+                        Line::from(format!("{:.2} PLN", needs_total)),
+                        Line::from(Span::styled(
+                            format!("{} {:.0}%", render_bar(needs_pct, bar_w), needs_pct),
+                            Style::default().fg(Color::Cyan),
+                        )),
+                        blank(),
+                        Line::from(Span::styled(
+                            "Wants",
+                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        )),
+                        Line::from(format!("{:.2} PLN", wants_total)),
+                        Line::from(Span::styled(
+                            format!("{} {:.0}%", render_bar(wants_pct, bar_w), wants_pct),
+                            Style::default().fg(Color::Yellow),
+                        )),
+                        blank(),
+                        divider(),
+                        blank(),
+                        label("Payment Progress"),
+                        Line::from(Span::styled(
+                            format!("{} {:.0}%", render_bar(payment_progress, bar_w), payment_progress),
+                            Style::default().fg(progress_color),
+                        )),
+                        blank(),
+                        label(&format!("Paid    {:.2} PLN", paid)),
+                        label(&format!("Unpaid  {:.2} PLN", unpaid)),
+                    ]);
 
-                    let right_text = vec![
-                        format!("Total: {:.2} PLN", total),
-                        format!("Needs: {:.2} PLN  Wants: {:.2} PLN", needs_total, wants_total),
-                        format!(""),
-                        format!("Paid: {:.2} PLN  Unpaid: {:.2} PLN", paid, unpaid),
-                        format!(""),
-                        format!("Payment Progress: {:.1}%", payment_progress),
-                    ].join("\n");
+                    let sidebar = Paragraph::new(sidebar_text)
+                        .block(Block::default().borders(Borders::ALL).title(" Overview "))
+                        .alignment(Alignment::Left);
+                    f.render_widget(sidebar, content[1]);
 
-                    let right_panel = Paragraph::new(right_text)
-                        .block(Block::default().borders(Borders::ALL).title("Monthly Summary"))
+                    // Help bar
+                    let help_text = Text::from(vec![Line::from(vec![
+                        Span::styled(" ◄ h ", dim),
+                        Span::styled("Month", Style::default().fg(Color::DarkGray)),
+                        Span::styled(" l ► ", dim),
+                        Span::raw("  "),
+                        Span::styled("j/k ", dim),
+                        Span::raw("Select  "),
+                        Span::styled("i ", dim),
+                        Span::raw("Add  "),
+                        Span::styled("Space ", dim),
+                        Span::raw("Paid  "),
+                        Span::styled("t ", dim),
+                        Span::raw("Category  "),
+                        Span::styled("d ", dim),
+                        Span::raw("Delete  "),
+                        Span::styled("c ", dim),
+                        Span::raw("Copy  "),
+                        Span::styled("b ", dim),
+                        Span::raw("Balance  "),
+                        Span::styled("q ", dim),
+                        Span::raw("Quit"),
+                    ])]);
+                    let help = Paragraph::new(help_text)
+                        .block(Block::default().borders(Borders::ALL))
                         .alignment(Alignment::Center);
-
-                    f.render_widget(left_panel, overview_layout[0]);
-                    f.render_widget(right_panel, overview_layout[1]);
-
-                    let help_text = "[h/l] Month | [j/k] Select | [i] Add | [Space] Paid | [t] Toggle Category | [d] Delete | [c] Copy | [b] Balance | [q] Quit";
-                    let status = Paragraph::new(help_text)
-                        .block(Block::default().borders(Borders::ALL));
-                    f.render_widget(status, chunks[3]);
+                    f.render_widget(help, chunks[2]);
                 },
+
                 AppMode::Overview => {
                     let chunks = Layout::default()
                         .direction(Direction::Vertical)
                         .margin(1)
                         .constraints([
-                            Constraint::Length(3),
-                            Constraint::Length(3),
-                            Constraint::Length(12),
                             Constraint::Length(3),
                             Constraint::Min(0),
                             Constraint::Length(3),
@@ -524,11 +611,11 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                     let month_names = ["January", "February", "March", "April", "May", "June",
                                      "July", "August", "September", "October", "November", "December"];
                     let month_name = month_names[app.current_month as usize - 1];
-                    let month_year = format!("{} {}", month_name, app.current_year);
-                    let title = Paragraph::new(month_year)
-                        .block(Block::default().borders(Borders::ALL))
+                    let title = Paragraph::new(format!("◄  {} {}  ►", month_name, app.current_year))
+                        .block(Block::default().borders(Borders::ALL)
+                            .border_style(Style::default().fg(Color::Cyan)))
                         .alignment(Alignment::Center)
-                        .style(Style::default().fg(Color::Cyan));
+                        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
                     f.render_widget(title, chunks[0]);
 
                     let total = app.expense_manager.get_month_total(app.current_year, app.current_month);
@@ -539,68 +626,96 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                     let balance = app.expense_manager.get_balance(app.current_year, app.current_month);
                     let free_money = balance - unpaid;
                     let payment_progress = if total > 0.0 { (paid / total) * 100.0 } else { 100.0 };
+                    let needs_pct = if total > 0.0 { (needs_total / total) * 100.0 } else { 0.0 };
+                    let wants_pct = if total > 0.0 { (wants_total / total) * 100.0 } else { 0.0 };
 
-                    let summary_layout = Layout::default()
+                    let bar_w = 20usize;
+                    let free_color = if free_money >= 0.0 { Color::Green } else { Color::Red };
+                    let progress_color = if payment_progress >= 80.0 { Color::Green }
+                        else if payment_progress >= 50.0 { Color::Yellow }
+                        else { Color::Red };
+                    let dim = Style::default().fg(Color::DarkGray);
+
+                    let content = Layout::default()
                         .direction(Direction::Horizontal)
                         .constraints([
                             Constraint::Percentage(50),
                             Constraint::Percentage(50),
                         ].as_ref())
-                        .split(chunks[2]);
+                        .split(chunks[1]);
 
-                    let balance_style = Style::default().fg(Color::Green);
+                    let left_text = Text::from(vec![
+                        Line::from(Span::styled("Balance", dim)),
+                        Line::from(Span::styled(
+                            format!("{:.2} PLN", balance),
+                            Style::default().add_modifier(Modifier::BOLD),
+                        )),
+                        Line::from(""),
+                        Line::from(Span::styled("Free Money", dim)),
+                        Line::from(Span::styled(
+                            format!("{:.2} PLN", free_money),
+                            Style::default().fg(free_color).add_modifier(Modifier::BOLD),
+                        )),
+                        Line::from(""),
+                        Line::from(Span::styled("─────────────────────────", dim)),
+                        Line::from(""),
+                        Line::from(Span::styled("Payment Progress", dim)),
+                        Line::from(Span::styled(
+                            format!("{} {:.0}%", render_bar(payment_progress, bar_w), payment_progress),
+                            Style::default().fg(progress_color),
+                        )),
+                        Line::from(""),
+                        Line::from(Span::styled(format!("Paid    {:.2} PLN", paid), dim)),
+                        Line::from(Span::styled(format!("Unpaid  {:.2} PLN", unpaid), dim)),
+                    ]);
 
-                    let left_text = vec![
-                        format!("Current Balance"),
-                        format!("{:.2} PLN", balance),
-                        format!(""),
-                        format!("Free Money"),
-                        format!("{:.2} PLN", free_money),
-                    ].join("\n");
+                    let left = Paragraph::new(left_text)
+                        .block(Block::default().borders(Borders::ALL).title(" Funds "))
+                        .alignment(Alignment::Left);
+                    f.render_widget(left, content[0]);
 
-                    let left_summary = Paragraph::new(left_text)
-                        .block(Block::default().borders(Borders::ALL).title("Available Funds"))
-                        .alignment(Alignment::Center)
-                        .style(balance_style);
+                    let right_text = Text::from(vec![
+                        Line::from(Span::styled("Total Expenses", dim)),
+                        Line::from(Span::styled(
+                            format!("{:.2} PLN", total),
+                            Style::default().add_modifier(Modifier::BOLD),
+                        )),
+                        Line::from(""),
+                        Line::from(Span::styled("─────────────────────────", dim)),
+                        Line::from(""),
+                        Line::from(Span::styled(
+                            "Needs",
+                            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        )),
+                        Line::from(format!("{:.2} PLN", needs_total)),
+                        Line::from(Span::styled(
+                            format!("{} {:.0}%", render_bar(needs_pct, bar_w), needs_pct),
+                            Style::default().fg(Color::Cyan),
+                        )),
+                        Line::from(""),
+                        Line::from(Span::styled(
+                            "Wants",
+                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        )),
+                        Line::from(format!("{:.2} PLN", wants_total)),
+                        Line::from(Span::styled(
+                            format!("{} {:.0}%", render_bar(wants_pct, bar_w), wants_pct),
+                            Style::default().fg(Color::Yellow),
+                        )),
+                    ]);
 
-                    let right_text = vec![
-                        format!("Total: {:.2} PLN", total),
-                        format!("Needs: {:.2}  Wants: {:.2}", needs_total, wants_total),
-                        format!(""),
-                        format!("Paid: {:.2} PLN", paid),
-                        format!("Unpaid: {:.2} PLN", unpaid),
-                    ].join("\n");
+                    let right = Paragraph::new(right_text)
+                        .block(Block::default().borders(Borders::ALL).title(" Breakdown "))
+                        .alignment(Alignment::Left);
+                    f.render_widget(right, content[1]);
 
-                    let right_summary = Paragraph::new(right_text)
-                        .block(Block::default().borders(Borders::ALL).title("Monthly Expenses"))
-                        .alignment(Alignment::Center);
-
-                    f.render_widget(left_summary, summary_layout[0]);
-                    f.render_widget(right_summary, summary_layout[1]);
-
-                    let progress_text = format!("Payment Progress: {:.1}%", payment_progress);
-                    let progress_style = if payment_progress >= 80.0 {
-                        Style::default().fg(Color::Green)
-                    } else if payment_progress >= 50.0 {
-                        Style::default().fg(Color::Yellow)
-                    } else {
-                        Style::default().fg(Color::Red)
-                    };
-
-                    let progress = Paragraph::new(progress_text)
+                    let help = Paragraph::new(" h/l Month  │  b Balance  │  H History  │  Esc List  │  q Quit")
                         .block(Block::default().borders(Borders::ALL))
-                        .style(progress_style)
+                        .style(Style::default().fg(Color::DarkGray))
                         .alignment(Alignment::Center);
-
-                    f.render_widget(progress, chunks[3]);
-
-                    let help_text = "[h/l] Change Month | [b] Set Balance | [H] View History | [Esc] Back to List | [q] Quit";
-                    let help = Paragraph::new(help_text)
-                        .block(Block::default().borders(Borders::ALL))
-                        .style(Style::default().fg(Color::Gray))
-                        .alignment(Alignment::Center);
-                    f.render_widget(help, chunks[5]);
+                    f.render_widget(help, chunks[2]);
                 }
+
                 AppMode::History => {
                     let chunks = Layout::default()
                         .direction(Direction::Vertical)
@@ -613,132 +728,157 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                         .split(f.size());
 
                     let title = Paragraph::new("Balance History")
-                        .block(Block::default().borders(Borders::ALL));
+                        .block(Block::default().borders(Borders::ALL)
+                            .border_style(Style::default().fg(Color::Cyan)))
+                        .alignment(Alignment::Center)
+                        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
                     f.render_widget(title, chunks[0]);
 
+                    let dim = Style::default().fg(Color::DarkGray);
                     let history = app.expense_manager.get_balance_history(app.current_year, app.current_month);
                     let items: Vec<Row> = history.iter().map(|log| {
                         Row::new(vec![
-                            log.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
-                            format!("{:.2} PLN", log.balance),
-                            format!("{:.2} PLN", log.total_expenses),
-                            format!("{:.2} PLN", log.unpaid_expenses),
-                            format!("{:.2} PLN", log.remaining),
+                            log.timestamp.format("%Y-%m-%d %H:%M").to_string(),
+                            format!("{:.2}", log.balance),
+                            format!("{:.2}", log.total_expenses),
+                            format!("{:.2}", log.unpaid_expenses),
+                            format!("{:.2}", log.remaining),
                         ])
                     }).collect();
 
                     let table = Table::new(items)
-                        .header(Row::new(vec![
-                            "Timestamp",
-                            "Balance",
-                            "Total Expenses",
-                            "Unpaid",
-                            "Remaining"
-                        ]).style(Style::default().fg(Color::Cyan)))
+                        .header(Row::new(vec!["Timestamp", "Balance", "Total", "Unpaid", "Remaining"])
+                            .style(dim))
                         .block(Block::default().borders(Borders::ALL))
                         .widths(&[
-                            Constraint::Percentage(25),
-                            Constraint::Percentage(15),
-                            Constraint::Percentage(20),
-                            Constraint::Percentage(20),
-                            Constraint::Percentage(20),
+                            Constraint::Percentage(28),
+                            Constraint::Percentage(18),
+                            Constraint::Percentage(18),
+                            Constraint::Percentage(18),
+                            Constraint::Percentage(18),
                         ]);
-
                     f.render_widget(table, chunks[1]);
 
-                    let help_text = "[Esc] Back to Overview | [q] Quit";
-                    let status = Paragraph::new(help_text)
-                        .block(Block::default().borders(Borders::ALL));
-                    f.render_widget(status, chunks[2]);
+                    let help = Paragraph::new(" Esc Back  │  q Quit")
+                        .block(Block::default().borders(Borders::ALL))
+                        .style(Style::default().fg(Color::DarkGray))
+                        .alignment(Alignment::Center);
+                    f.render_widget(help, chunks[2]);
                 }
+
                 AppMode::AddBalance => {
-                    let popup = centered_rect(40, 20, f.size());
+                    let popup = centered_rect(40, 22, f.size());
                     let input = Paragraph::new(format!(
-                        "Enter new balance amount:\n\nPLN {}\n\n[Enter] Save | [Esc] Cancel",
+                        "Enter new balance:\n\n  PLN  {}\n\n  Enter to save · Esc to cancel",
                         app.input_balance
                     ))
-                    .block(Block::default().borders(Borders::ALL).title(" Set Balance "))
+                    .block(Block::default().borders(Borders::ALL)
+                        .title(" Set Balance ")
+                        .border_style(Style::default().fg(Color::Cyan)))
                     .alignment(Alignment::Center);
-
                     f.render_widget(Clear, popup);
                     f.render_widget(input, popup);
                 }
+
                 AppMode::ConfirmDelete => {
-                    let popup = centered_rect(50, 25, f.size());
-                    let confirm_text = format!(
-                        "Delete this expense?\n\n{}\n\n[y] Yes, delete | [n] No, cancel",
+                    let popup = centered_rect(50, 22, f.size());
+                    let text = format!(
+                        "Delete this expense?\n\n  {}\n\n  y  Yes    n  No",
                         app.pending_delete_description
                     );
-                    let confirm_dialog = Paragraph::new(confirm_text)
-                        .block(Block::default().borders(Borders::ALL).title(" Confirm Delete "))
+                    let dialog = Paragraph::new(text)
+                        .block(Block::default().borders(Borders::ALL)
+                            .title(" Confirm Delete ")
+                            .border_style(Style::default().fg(Color::Red)))
                         .alignment(Alignment::Center)
                         .style(Style::default().fg(Color::Red));
-
                     f.render_widget(Clear, popup);
-                    f.render_widget(confirm_dialog, popup);
+                    f.render_widget(dialog, popup);
                 }
             }
 
+            // Add expense popup (overlays any mode)
             if let InputMode::Adding(field) = app.input_mode {
-                let popup = centered_rect(60, 50, f.size());
-                let input_layout = Layout::default()
+                let popup = centered_rect(56, 52, f.size());
+                f.render_widget(Clear, popup);
+
+                let outer = Block::default()
+                    .borders(Borders::ALL)
+                    .title(" New Expense ")
+                    .border_style(Style::default().fg(Color::Cyan));
+                let inner = outer.inner(popup);
+                f.render_widget(outer, popup);
+
+                let field_areas = Layout::default()
                     .direction(Direction::Vertical)
+                    .margin(1)
                     .constraints([
                         Constraint::Length(3), // Description
                         Constraint::Length(3), // Amount
                         Constraint::Length(3), // Category
-                        Constraint::Length(2), // Help
+                        Constraint::Min(0),    // Help
                     ].as_ref())
-                    .split(popup);
+                    .split(inner);
 
-                let desc_block = Block::default()
-                    .borders(Borders::ALL)
-                    .title(" Description ")
-                    .border_style(if matches!(field, InputField::Description) {
-                        Style::default().fg(Color::Yellow)
-                    } else {
-                        Style::default()
-                    });
+                let active = Style::default().fg(Color::Cyan);
+                let inactive = Style::default().fg(Color::DarkGray);
 
-                let amount_block = Block::default()
-                    .borders(Borders::ALL)
-                    .title(" Amount (PLN) ")
-                    .border_style(if matches!(field, InputField::Amount) {
-                        Style::default().fg(Color::Yellow)
-                    } else {
-                        Style::default()
-                    });
+                let desc_block = Block::default().borders(Borders::ALL).title(" Description ")
+                    .border_style(if matches!(field, InputField::Description) { active } else { inactive });
+                let amount_block = Block::default().borders(Borders::ALL).title(" Amount (PLN) ")
+                    .border_style(if matches!(field, InputField::Amount) { active } else { inactive });
+                let cat_block = Block::default().borders(Borders::ALL).title(" Category ")
+                    .border_style(if matches!(field, InputField::Category) { active } else { inactive });
 
-                let category_block = Block::default()
-                    .borders(Borders::ALL)
-                    .title(" Category ")
-                    .border_style(if matches!(field, InputField::Category) {
-                        Style::default().fg(Color::Yellow)
-                    } else {
-                        Style::default()
-                    });
-
-                let category_label = format!(
-                    "{}   {}",
-                    if app.input_category == Category::Need { "[> Need <]" } else { "[  Need  ]" },
-                    if app.input_category == Category::Want { "[> Want <]" } else { "[  Want  ]" },
+                f.render_widget(
+                    Paragraph::new(app.input_description.as_str()).block(desc_block),
+                    field_areas[0],
+                );
+                f.render_widget(
+                    Paragraph::new(app.input_amount.as_str()).block(amount_block),
+                    field_areas[1],
                 );
 
-                let desc_text = Paragraph::new(app.input_description.as_str())
-                    .block(desc_block);
-                let amount_text = Paragraph::new(app.input_amount.as_str())
-                    .block(amount_block);
-                let category_text = Paragraph::new(category_label)
-                    .block(category_block)
-                    .alignment(Alignment::Center);
-                let help_text = Paragraph::new("[Tab] Next Field | [n/w or Space] Toggle Category | [Enter] Save | [Esc] Cancel")
-                    .alignment(Alignment::Center);
+                let need_style = if app.input_category == Category::Need {
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+                let want_style = if app.input_category == Category::Want {
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+                let cat_line = Line::from(vec![
+                    Span::styled(
+                        if app.input_category == Category::Need { "  [ ▶ Need  ] " } else { "  [   Need  ] " },
+                        need_style,
+                    ),
+                    Span::raw("   "),
+                    Span::styled(
+                        if app.input_category == Category::Want { "[ ▶ Want  ]  " } else { "[   Want  ]  " },
+                        want_style,
+                    ),
+                ]);
+                f.render_widget(
+                    Paragraph::new(Text::from(vec![cat_line])).block(cat_block),
+                    field_areas[2],
+                );
 
-                f.render_widget(Clear, popup);
-                f.render_widget(desc_text, input_layout[0]);
-                f.render_widget(amount_text, input_layout[1]);
-                f.render_widget(category_text, input_layout[2]);
-                f.render_widget(help_text, input_layout[3]);
+                let help = Paragraph::new(
+                    Line::from(vec![
+                        Span::styled("Tab ", Style::default().fg(Color::DarkGray)),
+                        Span::raw("Next  "),
+                        Span::styled("n/w ", Style::default().fg(Color::DarkGray)),
+                        Span::raw("Category  "),
+                        Span::styled("Enter ", Style::default().fg(Color::DarkGray)),
+                        Span::raw("Save  "),
+                        Span::styled("Esc ", Style::default().fg(Color::DarkGray)),
+                        Span::raw("Cancel"),
+                    ])
+                )
+                .alignment(Alignment::Center);
+                f.render_widget(help, field_areas[3]);
             }
         })?;
 
@@ -757,7 +897,7 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                     KeyCode::Char('o') => {
                         app.app_mode = AppMode::Overview;
                     }
-                    KeyCode::Char('j') | KeyCode::Down | KeyCode::Char('▼') => {
+                    KeyCode::Char('j') | KeyCode::Down => {
                         if matches!(app.app_mode, AppMode::List) {
                             if let Some(expenses) = app.expense_manager
                                 .get_month_expenses(app.current_year, app.current_month)
@@ -771,7 +911,7 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                             }
                         }
                     }
-                    KeyCode::Char('k') | KeyCode::Up | KeyCode::Char('▲') => {
+                    KeyCode::Char('k') | KeyCode::Up => {
                         if matches!(app.app_mode, AppMode::List) {
                             if app.selected_expense.is_some() {
                                 app.selected_expense = Some(app.selected_expense.map_or(0, |i| {
@@ -786,46 +926,45 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                             }
                         }
                     }
-                    KeyCode::Char('h') | KeyCode::Left | KeyCode::Char('◄') => {
-                        if app.current_month > 1 {
-                            app.current_month -= 1;
-                        } else {
-                            app.current_month = 12;
-                            app.current_year -= 1;
+                    KeyCode::Char('h') | KeyCode::Left => {
+                        if matches!(app.app_mode, AppMode::List | AppMode::Overview) {
+                            if app.current_month > 1 {
+                                app.current_month -= 1;
+                            } else {
+                                app.current_month = 12;
+                                app.current_year -= 1;
+                            }
+                            app.selected_expense = None;
                         }
-                        app.selected_expense = None;
                     }
-                    KeyCode::Char('l') | KeyCode::Right | KeyCode::Char('►') => {
-                        if app.current_month < 12 {
-                            app.current_month += 1;
-                        } else {
-                            app.current_month = 1;
-                            app.current_year += 1;
+                    KeyCode::Char('l') | KeyCode::Right => {
+                        if matches!(app.app_mode, AppMode::List | AppMode::Overview) {
+                            if app.current_month < 12 {
+                                app.current_month += 1;
+                            } else {
+                                app.current_month = 1;
+                                app.current_year += 1;
+                            }
+                            app.selected_expense = None;
                         }
-                        app.selected_expense = None;
                     }
                     KeyCode::Char(' ') => {
                         if matches!(app.app_mode, AppMode::List) {
-                            if let Some(selected_display_idx) = app.selected_expense {
+                            if let Some(sel) = app.selected_expense {
                                 let original_idx = if let Some(expenses) = app.expense_manager
                                     .get_month_expenses(app.current_year, app.current_month)
                                 {
-                                    sorted_expenses_grouped(expenses)
-                                        .get(selected_display_idx)
-                                        .map(|(idx, _)| *idx)
+                                    sorted_expenses_grouped(expenses).get(sel).map(|(idx, _)| *idx)
                                 } else {
                                     None
                                 };
-
-                                if let Some(original_idx) = original_idx {
+                                if let Some(idx) = original_idx {
                                     if let Some(expenses_mut) = app.expense_manager
                                         .get_month_expenses_mut(app.current_year, app.current_month)
                                     {
-                                        if let Some(expense) = expenses_mut.get_mut(original_idx) {
+                                        if let Some(expense) = expenses_mut.get_mut(idx) {
                                             expense.toggle_paid();
-                                            if let Err(e) = app.expense_manager.save() {
-                                                log_message(&format!("Failed to save after toggling paid status: {}", e));
-                                            }
+                                            let _ = app.expense_manager.save();
                                         }
                                     }
                                 }
@@ -834,17 +973,16 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                     }
                     KeyCode::Char('d') => {
                         if matches!(app.app_mode, AppMode::List) {
-                            if let Some(selected_display_idx) = app.selected_expense {
+                            if let Some(sel) = app.selected_expense {
                                 let expense_info = if let Some(expenses) = app.expense_manager
                                     .get_month_expenses(app.current_year, app.current_month)
                                 {
                                     sorted_expenses_grouped(expenses)
-                                        .get(selected_display_idx)
+                                        .get(sel)
                                         .map(|(idx, exp)| (*idx, exp.description.clone()))
                                 } else {
                                     None
                                 };
-
                                 if let Some((idx, desc)) = expense_info {
                                     app.pending_delete_index = Some(idx);
                                     app.pending_delete_description = desc;
@@ -855,51 +993,39 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                     }
                     KeyCode::Char('c') => {
                         if matches!(app.app_mode, AppMode::List) {
-                            if let Some(selected_display_idx) = app.selected_expense {
+                            if let Some(sel) = app.selected_expense {
                                 let original_idx = if let Some(expenses) = app.expense_manager
                                     .get_month_expenses(app.current_year, app.current_month)
                                 {
-                                    sorted_expenses_grouped(expenses)
-                                        .get(selected_display_idx)
-                                        .map(|(idx, _)| *idx)
+                                    sorted_expenses_grouped(expenses).get(sel).map(|(idx, _)| *idx)
                                 } else {
                                     None
                                 };
-
-                                if let Some(original_idx) = original_idx {
-                                    if app.expense_manager.copy_expense_to_next_month(
-                                        app.current_year,
-                                        app.current_month,
-                                        original_idx
-                                    ) {
-                                        log_message(&format!("Copied expense at original index {} to next month", original_idx));
-                                    }
+                                if let Some(idx) = original_idx {
+                                    app.expense_manager.copy_expense_to_next_month(
+                                        app.current_year, app.current_month, idx,
+                                    );
                                 }
                             }
                         }
                     }
                     KeyCode::Char('t') => {
                         if matches!(app.app_mode, AppMode::List) {
-                            if let Some(selected_display_idx) = app.selected_expense {
+                            if let Some(sel) = app.selected_expense {
                                 let original_idx = if let Some(expenses) = app.expense_manager
                                     .get_month_expenses(app.current_year, app.current_month)
                                 {
-                                    sorted_expenses_grouped(expenses)
-                                        .get(selected_display_idx)
-                                        .map(|(idx, _)| *idx)
+                                    sorted_expenses_grouped(expenses).get(sel).map(|(idx, _)| *idx)
                                 } else {
                                     None
                                 };
-
-                                if let Some(original_idx) = original_idx {
+                                if let Some(idx) = original_idx {
                                     if let Some(expenses_mut) = app.expense_manager
                                         .get_month_expenses_mut(app.current_year, app.current_month)
                                     {
-                                        if let Some(expense) = expenses_mut.get_mut(original_idx) {
+                                        if let Some(expense) = expenses_mut.get_mut(idx) {
                                             expense.category = expense.category.toggle();
-                                            if let Err(e) = app.expense_manager.save() {
-                                                log_message(&format!("Failed to save after toggling category: {}", e));
-                                            }
+                                            let _ = app.expense_manager.save();
                                         }
                                     }
                                 }
@@ -933,14 +1059,7 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                     KeyCode::Enter => {
                         if matches!(app.app_mode, AppMode::AddBalance) {
                             if let Ok(balance) = app.input_balance.parse::<f64>() {
-                                app.expense_manager.set_balance(
-                                    balance,
-                                    app.current_year,
-                                    app.current_month
-                                );
-                                if let Err(e) = app.expense_manager.save() {
-                                    log_message(&format!("Failed to save after setting balance: {}", e));
-                                }
+                                app.expense_manager.set_balance(balance, app.current_year, app.current_month);
                                 app.app_mode = AppMode::List;
                             }
                         }
@@ -953,27 +1072,18 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                         } else if matches!(app.app_mode, AppMode::ConfirmDelete) {
                             match c {
                                 'y' | 'Y' => {
-                                    if let Some(original_idx) = app.pending_delete_index {
-                                        let selected_display_idx = app.selected_expense;
-                                        if app.expense_manager.delete_expense(
-                                            app.current_year,
-                                            app.current_month,
-                                            original_idx
-                                        ) {
+                                    if let Some(idx) = app.pending_delete_index {
+                                        let sel = app.selected_expense;
+                                        if app.expense_manager.delete_expense(app.current_year, app.current_month, idx) {
                                             let new_len = app.expense_manager
                                                 .get_month_expenses(app.current_year, app.current_month)
                                                 .map(|e| e.len())
                                                 .unwrap_or(0);
-
                                             if new_len == 0 {
                                                 app.selected_expense = None;
-                                            } else if let Some(sel_idx) = selected_display_idx {
-                                                if sel_idx >= new_len {
-                                                    app.selected_expense = Some(new_len - 1);
-                                                }
+                                            } else if let Some(s) = sel {
+                                                if s >= new_len { app.selected_expense = Some(new_len - 1); }
                                             }
-
-                                            log_message(&format!("Deleted expense at original index {}", original_idx));
                                         }
                                     }
                                     app.app_mode = AppMode::List;
@@ -1015,14 +1125,8 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                                     amount,
                                     app.input_category,
                                 );
-                                app.expense_manager.add_expense(
-                                    app.current_year,
-                                    app.current_month,
-                                    expense,
-                                );
-                                if let Err(e) = app.expense_manager.save() {
-                                    log_message(&format!("Failed to save after adding expense: {}", e));
-                                }
+                                app.expense_manager.add_expense(app.current_year, app.current_month, expense);
+                                let _ = app.expense_manager.save();
                                 app.input_mode = InputMode::Normal;
                                 app.input_description.clear();
                                 app.input_amount.clear();
@@ -1037,22 +1141,16 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: Ap
                     }
                     KeyCode::Char(c) => {
                         match field {
-                            InputField::Description => {
-                                app.input_description.push(c);
-                            }
+                            InputField::Description => { app.input_description.push(c); }
                             InputField::Amount => {
-                                if c.is_digit(10) || c == '.' {
-                                    app.input_amount.push(c);
-                                }
+                                if c.is_digit(10) || c == '.' { app.input_amount.push(c); }
                             }
-                            InputField::Category => {
-                                match c {
-                                    ' ' => { app.input_category = app.input_category.toggle(); }
-                                    'n' | 'N' => { app.input_category = Category::Need; }
-                                    'w' | 'W' => { app.input_category = Category::Want; }
-                                    _ => {}
-                                }
-                            }
+                            InputField::Category => match c {
+                                ' ' => { app.input_category = app.input_category.toggle(); }
+                                'n' | 'N' => { app.input_category = Category::Need; }
+                                'w' | 'W' => { app.input_category = Category::Want; }
+                                _ => {}
+                            },
                         }
                     }
                     KeyCode::Backspace => {
