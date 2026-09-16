@@ -12,7 +12,8 @@ A fast, keyboard-first expense tracker for the terminal. Recurring Costs keeps e
 - Copy a recurring expense into the following month.
 - Keep a history of balance updates.
 - Optionally keep a separate, dated transaction ledger for actual cash activity.
-- Record both spending and income across practical categories.
+- Record both spending and income across practical or user-created categories.
+- Review monthly spending totals grouped by category.
 - Compare recorded spending with the monthly plan without changing the plan.
 - Use Vim keys or arrow keys throughout the interface.
 - Store data locally—no account, server, or network connection required.
@@ -36,6 +37,8 @@ cargo build --release
 
 ## Controls
 
+Press `?` from any screen to open the complete keyboard shortcut reference. Press `Esc` to return.
+
 ### Expense list
 
 | Key | Action |
@@ -43,16 +46,16 @@ cargo build --release
 | `j` / `↓`, `k` / `↑` | Select an expense |
 | `h` / `←`, `l` / `→` | Move between months |
 | `Space` | Mark the selected expense paid or unpaid |
-| `i` | Add an expense |
+| `c` | Create an expense |
 | `t` | Switch the selected expense between Need and Want |
-| `c` | Copy the selected expense to the next month |
+| `y` | Copy the selected expense to the next month |
 | `d` | Delete the selected expense |
 | `b` | Update the month’s balance |
 | `o` | Open the full overview |
-| `x` | Open transaction tracking |
+| `Shift+H` / `Shift+L` | Move between Plan, Transactions, and Categories |
 | `q` | Quit |
 
-The Plan and Transactions labels can also be clicked with the mouse.
+The top navigation labels can also be clicked with the mouse.
 
 ### Transactions
 
@@ -60,14 +63,20 @@ Transaction tracking is an optional, separate workflow. Nothing recorded in the 
 
 | Key | Action |
 | --- | --- |
-| `a` | Record a transaction |
+| `c` | Create a transaction |
+| `e` | Edit the selected transaction |
+| `v` | Toggle between the selected month and all transactions |
 | `j` / `↓`, `k` / `↑` | Select a transaction |
 | `h` / `←`, `l` / `→` | Move between months |
 | `d` | Delete the selected transaction |
-| `p` | Return to the monthly plan |
+| `Shift+H` / `Shift+L` | Move between Plan, Transactions, and Categories |
 | `q` | Quit |
 
-The transaction form records a date, description, positive amount, type (expense or income), and category. Use `Tab` between fields, arrow keys to choose type or category, `Enter` to save, and `Esc` to cancel.
+The transaction form records a date, description, positive amount, type (expense or income), and category. Type into the category field to filter it, then use `j/k` or `↑/↓` to select a match. Use `Tab` between fields, `Enter` to save, and `Esc` to cancel. New categories can apply to expenses, income, or both.
+
+### Categories
+
+The Categories screen lists every category, whether it applies to expenses or income, its usage count, and its status. Use `j` / `k` to select, `c` to create, `e` to edit, and `d` to delete. Categories used by transactions cannot be deleted.
 
 ### Overview and history
 
