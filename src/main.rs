@@ -1,6 +1,8 @@
-use chrono::{DateTime, Datelike, Local};
+use chrono::{DateTime, Datelike, Local, NaiveDate};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, MouseButton, MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -35,7 +37,7 @@ fn log_message(message: &str) {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct BalanceLog {
+pub struct BalanceLog {
     timestamp: DateTime<Local>,
     balance: f64,
     total_expenses: f64,
@@ -43,16 +45,11 @@ struct BalanceLog {
     remaining: f64,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-enum Category {
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub enum Category {
+    #[default]
     Need,
     Want,
-}
-
-impl Default for Category {
-    fn default() -> Self {
-        Category::Need
-    }
 }
 
 impl Category {
@@ -71,6 +68,83 @@ pub struct Expense {
     is_paid: bool,
     #[serde(default)]
     category: Category,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+enum TransactionKind {
+    Expense,
+    Income,
+}
+
+impl TransactionKind {
+    fn toggle(self) -> Self {
+        match self {
+            TransactionKind::Expense => TransactionKind::Income,
+            TransactionKind::Income => TransactionKind::Expense,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+enum TransactionCategory {
+    Food,
+    Home,
+    Transport,
+    Shopping,
+    Health,
+    Leisure,
+    Income,
+    Other,
+}
+
+impl TransactionCategory {
+    fn label(self) -> &'static str {
+        match self {
+            TransactionCategory::Food => "Food",
+            TransactionCategory::Home => "Home",
+            TransactionCategory::Transport => "Transport",
+            TransactionCategory::Shopping => "Shopping",
+            TransactionCategory::Health => "Health",
+            TransactionCategory::Leisure => "Leisure",
+            TransactionCategory::Income => "Income",
+            TransactionCategory::Other => "Other",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            TransactionCategory::Food => TransactionCategory::Home,
+            TransactionCategory::Home => TransactionCategory::Transport,
+            TransactionCategory::Transport => TransactionCategory::Shopping,
+            TransactionCategory::Shopping => TransactionCategory::Health,
+            TransactionCategory::Health => TransactionCategory::Leisure,
+            TransactionCategory::Leisure => TransactionCategory::Other,
+            TransactionCategory::Income => TransactionCategory::Other,
+            TransactionCategory::Other => TransactionCategory::Food,
+        }
+    }
+
+    fn previous(self) -> Self {
+        match self {
+            TransactionCategory::Food => TransactionCategory::Other,
+            TransactionCategory::Home => TransactionCategory::Food,
+            TransactionCategory::Transport => TransactionCategory::Home,
+            TransactionCategory::Shopping => TransactionCategory::Transport,
+            TransactionCategory::Health => TransactionCategory::Shopping,
+            TransactionCategory::Leisure => TransactionCategory::Health,
+            TransactionCategory::Income => TransactionCategory::Other,
+            TransactionCategory::Other => TransactionCategory::Leisure,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Transaction {
+    date: NaiveDate,
+    description: String,
+    amount: f64,
+    kind: TransactionKind,
+    category: TransactionCategory,
 }
 
 impl Expense {
@@ -93,6 +167,8 @@ pub struct ExpenseManager {
     expenses: HashMap<String, Vec<Expense>>,
     balances: HashMap<String, f64>,
     balance_history: HashMap<String, Vec<BalanceLog>>,
+    #[serde(default)]
+    transactions: Vec<Transaction>,
 }
 
 impl ExpenseManager {
@@ -108,6 +184,7 @@ impl ExpenseManager {
                     expenses: HashMap::new(),
                     balances: HashMap::new(),
                     balance_history: HashMap::new(),
+                    transactions: Vec::new(),
                 }
             }
         }
@@ -167,7 +244,7 @@ impl ExpenseManager {
 
         self.balance_history
             .entry(key)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(BalanceLog {
                 timestamp: Local::now(),
                 balance,
@@ -183,10 +260,7 @@ impl ExpenseManager {
 
     pub fn add_expense(&mut self, year: i32, month: u32, expense: Expense) {
         let key = Self::get_key(year, month);
-        self.expenses
-            .entry(key)
-            .or_insert_with(Vec::new)
-            .push(expense);
+        self.expenses.entry(key).or_default().push(expense);
 
         if let Err(e) = self.save() {
             log_message(&format!("Failed to save after adding expense: {}", e));
@@ -305,6 +379,44 @@ impl ExpenseManager {
         }
         false
     }
+
+    fn add_transaction(&mut self, transaction: Transaction) -> usize {
+        self.transactions.push(transaction);
+        let index = self.transactions.len() - 1;
+        if let Err(e) = self.save() {
+            log_message(&format!("Failed to save after adding transaction: {}", e));
+        }
+        index
+    }
+
+    fn month_transactions(&self, year: i32, month: u32) -> Vec<(usize, &Transaction)> {
+        let mut items: Vec<_> = self
+            .transactions
+            .iter()
+            .enumerate()
+            .filter(|(_, transaction)| {
+                transaction.date.year() == year && transaction.date.month() == month
+            })
+            .collect();
+        items.sort_by(|a, b| b.1.date.cmp(&a.1.date).then_with(|| b.0.cmp(&a.0)));
+        items
+    }
+
+    fn delete_transaction(&mut self, index: usize) -> bool {
+        if index < self.transactions.len() {
+            self.transactions.remove(index);
+            let _ = self.save();
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl Default for ExpenseManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 fn sorted_expenses_grouped(expenses: &[Expense]) -> Vec<(usize, &Expense)> {
@@ -330,7 +442,7 @@ fn sorted_expenses_grouped(expenses: &[Expense]) -> Vec<(usize, &Expense)> {
             .cmp(&b.1.description.to_lowercase())
     });
 
-    needs.into_iter().chain(wants.into_iter()).collect()
+    needs.into_iter().chain(wants).collect()
 }
 
 fn render_bar(percent: f64, width: usize) -> String {
@@ -343,6 +455,7 @@ fn render_bar(percent: f64, width: usize) -> String {
 enum InputMode {
     Normal,
     Adding(InputField),
+    AddingTransaction(TransactionInputField),
 }
 
 #[derive(Copy, Clone)]
@@ -353,12 +466,23 @@ enum InputField {
 }
 
 #[derive(Copy, Clone)]
+enum TransactionInputField {
+    Date,
+    Description,
+    Amount,
+    Kind,
+    Category,
+}
+
+#[derive(Copy, Clone)]
 enum AppMode {
     List,
+    Transactions,
     Overview,
     History,
     AddBalance,
     ConfirmDelete,
+    ConfirmDeleteTransaction,
 }
 
 impl AppMode {
@@ -374,15 +498,20 @@ struct App {
     current_year: i32,
     current_month: u32,
     selected_expense: Option<usize>,
+    selected_transaction: Option<usize>,
     input_description: String,
     input_amount: String,
     input_balance: String,
     input_category: Category,
+    transaction_date: String,
+    transaction_kind: TransactionKind,
+    transaction_category: TransactionCategory,
     input_error: Option<String>,
     balance_return_mode: AppMode,
     pending_delete_index: Option<usize>,
     pending_delete_description: String,
     pending_delete_amount: f64,
+    pending_transaction_index: Option<usize>,
 }
 
 impl App {
@@ -395,15 +524,20 @@ impl App {
             current_year: now.year(),
             current_month: now.month(),
             selected_expense: None,
+            selected_transaction: None,
             input_description: String::new(),
             input_amount: String::new(),
             input_balance: String::new(),
             input_category: Category::Need,
+            transaction_date: now.format("%Y-%m-%d").to_string(),
+            transaction_kind: TransactionKind::Expense,
+            transaction_category: TransactionCategory::Food,
             input_error: None,
             balance_return_mode: AppMode::List,
             pending_delete_index: None,
             pending_delete_description: String::new(),
             pending_delete_amount: 0.0,
+            pending_transaction_index: None,
         }
     }
 }
@@ -445,19 +579,28 @@ fn run_app<B: ratatui::backend::Backend>(
                         "December",
                     ];
                     let month_name = month_names[app.current_month as usize - 1];
-                    let title_text = format!("◄  {} {}  ►", month_name, app.current_year);
-                    let title = Paragraph::new(title_text)
-                        .block(
-                            Block::default()
-                                .borders(Borders::ALL)
-                                .border_style(Style::default().fg(Color::Cyan)),
-                        )
-                        .alignment(Alignment::Center)
-                        .style(
+                    let title = Paragraph::new(Line::from(vec![
+                        Span::styled(
+                            " PLAN ",
+                            Style::default()
+                                .fg(Color::Black)
+                                .bg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!("  ◄  {} {}  ►  ", month_name, app.current_year),
                             Style::default()
                                 .fg(Color::Cyan)
                                 .add_modifier(Modifier::BOLD),
-                        );
+                        ),
+                        Span::styled(" TRANSACTIONS ", Style::default().fg(Color::DarkGray)),
+                    ]))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(Color::Cyan)),
+                    )
+                    .alignment(Alignment::Center);
                     f.render_widget(title, chunks[0]);
 
                     // Main area: expense list + sidebar
@@ -749,12 +892,262 @@ fn run_app<B: ratatui::backend::Backend>(
                         Span::raw("Copy  "),
                         Span::styled("b ", dim),
                         Span::raw("Balance  "),
+                        Span::styled("x ", dim),
+                        Span::raw("Transactions  "),
                         Span::styled("q ", dim),
                         Span::raw("Quit"),
                     ])]);
                     let help = Paragraph::new(help_text)
                         .block(Block::default().borders(Borders::ALL))
                         .alignment(Alignment::Center);
+                    f.render_widget(help, chunks[2]);
+                }
+
+                AppMode::Transactions => {
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .margin(1)
+                        .constraints([
+                            Constraint::Length(3),
+                            Constraint::Min(0),
+                            Constraint::Length(3),
+                        ])
+                        .split(f.size());
+                    let month_names = [
+                        "January",
+                        "February",
+                        "March",
+                        "April",
+                        "May",
+                        "June",
+                        "July",
+                        "August",
+                        "September",
+                        "October",
+                        "November",
+                        "December",
+                    ];
+                    let title = Paragraph::new(Line::from(vec![
+                        Span::styled(" PLAN ", Style::default().fg(Color::DarkGray)),
+                        Span::styled(
+                            format!(
+                                "  ◄  {} {}  ►  ",
+                                month_names[app.current_month as usize - 1],
+                                app.current_year
+                            ),
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            " TRANSACTIONS ",
+                            Style::default()
+                                .fg(Color::Black)
+                                .bg(Color::Green)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(Color::Green)),
+                    )
+                    .alignment(Alignment::Center);
+                    f.render_widget(title, chunks[0]);
+
+                    let content = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Percentage(68), Constraint::Percentage(32)])
+                        .split(chunks[1]);
+                    let transactions = app
+                        .expense_manager
+                        .month_transactions(app.current_year, app.current_month);
+                    let dim = Style::default().fg(Color::DarkGray);
+                    let mut rows = Vec::new();
+                    let mut previous_date = None;
+                    for (display_index, (_, transaction)) in transactions.iter().enumerate() {
+                        if previous_date != Some(transaction.date) {
+                            rows.push(
+                                Row::new(vec![
+                                    format!("  {}", transaction.date.format("%a, %d %b")),
+                                    String::new(),
+                                    String::new(),
+                                    String::new(),
+                                ])
+                                .style(
+                                    Style::default()
+                                        .fg(Color::DarkGray)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                            );
+                            previous_date = Some(transaction.date);
+                        }
+                        let selected = app.selected_transaction == Some(display_index);
+                        let amount_style = if transaction.kind == TransactionKind::Income {
+                            Style::default().fg(Color::Green)
+                        } else {
+                            Style::default().fg(Color::White)
+                        };
+                        rows.push(
+                            Row::new(vec![
+                                format!(
+                                    "{}{}",
+                                    if selected { "▶ " } else { "  " },
+                                    transaction.description
+                                ),
+                                transaction.category.label().to_string(),
+                                if transaction.kind == TransactionKind::Income {
+                                    "Income"
+                                } else {
+                                    "Expense"
+                                }
+                                .to_string(),
+                                format!(
+                                    "{}{:.2}",
+                                    if transaction.kind == TransactionKind::Income {
+                                        "+"
+                                    } else {
+                                        "−"
+                                    },
+                                    transaction.amount
+                                ),
+                            ])
+                            .style(if selected {
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD)
+                            } else {
+                                amount_style
+                            }),
+                        );
+                    }
+                    if rows.is_empty() {
+                        rows.push(
+                            Row::new(vec![
+                                "  No transactions yet — press a to record one".to_string(),
+                                String::new(),
+                                String::new(),
+                                String::new(),
+                            ])
+                            .style(dim),
+                        );
+                    }
+                    let table = Table::new(rows)
+                        .header(
+                            Row::new(vec!["  Description", "Category", "Type", "Amount (PLN)"])
+                                .style(dim),
+                        )
+                        .block(Block::default().borders(Borders::ALL).title(" Activity "))
+                        .widths(&[
+                            Constraint::Percentage(43),
+                            Constraint::Percentage(20),
+                            Constraint::Percentage(17),
+                            Constraint::Percentage(20),
+                        ]);
+                    f.render_widget(table, content[0]);
+
+                    let spent: f64 = transactions
+                        .iter()
+                        .filter(|(_, t)| t.kind == TransactionKind::Expense)
+                        .map(|(_, t)| t.amount)
+                        .sum();
+                    let income: f64 = transactions
+                        .iter()
+                        .filter(|(_, t)| t.kind == TransactionKind::Income)
+                        .map(|(_, t)| t.amount)
+                        .sum();
+                    let net = income - spent;
+                    let planned = app
+                        .expense_manager
+                        .get_month_total(app.current_year, app.current_month);
+                    let pace = if planned > 0.0 {
+                        spent / planned * 100.0
+                    } else {
+                        0.0
+                    };
+                    let bar_width = content[1].width.saturating_sub(10) as usize;
+                    let summary = Text::from(vec![
+                        Line::from(Span::styled("THIS MONTH", dim.add_modifier(Modifier::BOLD))),
+                        Line::from(""),
+                        Line::from(vec![
+                            Span::styled("Spent       ", dim),
+                            Span::styled(
+                                format!("{spent:.2} PLN"),
+                                Style::default().add_modifier(Modifier::BOLD),
+                            ),
+                        ]),
+                        Line::from(vec![
+                            Span::styled("Income      ", dim),
+                            Span::styled(
+                                format!("{income:.2} PLN"),
+                                Style::default().fg(Color::Green),
+                            ),
+                        ]),
+                        Line::from(vec![
+                            Span::styled("Net flow    ", dim),
+                            Span::styled(
+                                format!("{net:+.2} PLN"),
+                                Style::default()
+                                    .fg(if net >= 0.0 { Color::Green } else { Color::Red })
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                        ]),
+                        Line::from(""),
+                        Line::from(Span::styled("────────────────────────", dim)),
+                        Line::from(""),
+                        Line::from(Span::styled(
+                            "PLAN CONTEXT",
+                            dim.add_modifier(Modifier::BOLD),
+                        )),
+                        Line::from(""),
+                        Line::from(vec![
+                            Span::styled("Planned     ", dim),
+                            Span::raw(format!("{planned:.2} PLN")),
+                        ]),
+                        Line::from(vec![
+                            Span::styled("Recorded    ", dim),
+                            Span::raw(format!("{pace:.0}%")),
+                        ]),
+                        Line::from(Span::styled(
+                            render_bar(pace.min(100.0), bar_width.max(4)),
+                            Style::default().fg(if pace <= 100.0 {
+                                Color::Cyan
+                            } else {
+                                Color::Red
+                            }),
+                        )),
+                        Line::from(""),
+                        Line::from(Span::styled(
+                            "Transactions are optional and never change your monthly plan.",
+                            dim,
+                        )),
+                    ]);
+                    f.render_widget(
+                        Paragraph::new(summary).block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .title(" Cash flow ")
+                                .padding(Padding::horizontal(1)),
+                        ),
+                        content[1],
+                    );
+
+                    let help = Paragraph::new(Line::from(vec![
+                        Span::styled("p ", dim),
+                        Span::raw("Plan  "),
+                        Span::styled("h/l ", dim),
+                        Span::raw("Month  "),
+                        Span::styled("j/k ", dim),
+                        Span::raw("Select  "),
+                        Span::styled("a ", dim),
+                        Span::raw("Add transaction  "),
+                        Span::styled("d ", dim),
+                        Span::raw("Delete  "),
+                        Span::styled("q ", dim),
+                        Span::raw("Quit"),
+                    ]))
+                    .block(Block::default().borders(Borders::ALL))
+                    .alignment(Alignment::Center);
                     f.render_widget(help, chunks[2]);
                 }
 
@@ -1093,7 +1486,9 @@ fn run_app<B: ratatui::backend::Backend>(
                     );
                 }
 
-                AppMode::ConfirmDelete => {
+                AppMode::ConfirmDelete | AppMode::ConfirmDeleteTransaction => {
+                    let deleting_transaction =
+                        matches!(app.app_mode, AppMode::ConfirmDeleteTransaction);
                     let popup = centered_dialog(58, 12, f.size());
                     f.render_widget(Clear, popup);
                     f.render_widget(
@@ -1103,7 +1498,11 @@ fn run_app<B: ratatui::backend::Backend>(
 
                     let outer = Block::default()
                         .borders(Borders::ALL)
-                        .title(" Delete expense? ")
+                        .title(if deleting_transaction {
+                            " Delete transaction? "
+                        } else {
+                            " Delete expense? "
+                        })
                         .title_alignment(Alignment::Center)
                         .border_style(Style::default().fg(Color::Red));
                     let inner = outer.inner(popup);
@@ -1119,9 +1518,13 @@ fn run_app<B: ratatui::backend::Backend>(
                         ])
                         .split(inner);
                     f.render_widget(
-                        Paragraph::new("This will permanently remove the expense from this month.")
-                            .style(Style::default().fg(Color::DarkGray))
-                            .alignment(Alignment::Center),
+                        Paragraph::new(if deleting_transaction {
+                            "This removes the record. Your monthly plan stays unchanged."
+                        } else {
+                            "This will permanently remove the expense from this month."
+                        })
+                        .style(Style::default().fg(Color::DarkGray))
+                        .alignment(Alignment::Center),
                         areas[0],
                     );
                     f.render_widget(
@@ -1149,7 +1552,11 @@ fn run_app<B: ratatui::backend::Backend>(
                             ),
                             Span::raw(" Delete    "),
                             Span::styled(" n / Esc ", Style::default().fg(Color::DarkGray)),
-                            Span::raw("Keep expense"),
+                            Span::raw(if deleting_transaction {
+                                "Keep transaction"
+                            } else {
+                                "Keep expense"
+                            }),
                         ]))
                         .alignment(Alignment::Center),
                         areas[3],
@@ -1308,12 +1715,249 @@ fn run_app<B: ratatui::backend::Backend>(
                 .alignment(Alignment::Center);
                 f.render_widget(help, field_areas[4]);
             }
+
+            if let InputMode::AddingTransaction(field) = app.input_mode {
+                let popup = centered_dialog(68, 22, f.size());
+                f.render_widget(Clear, popup);
+                f.render_widget(
+                    Block::default().style(Style::default().bg(Color::Black)),
+                    popup,
+                );
+                let outer = Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Record transaction ")
+                    .title_alignment(Alignment::Center)
+                    .border_style(Style::default().fg(Color::Green));
+                let inner = outer.inner(popup);
+                f.render_widget(outer, popup);
+                let areas = Layout::default()
+                    .direction(Direction::Vertical)
+                    .margin(1)
+                    .constraints([
+                        Constraint::Length(3),
+                        Constraint::Length(3),
+                        Constraint::Length(3),
+                        Constraint::Length(3),
+                        Constraint::Length(3),
+                        Constraint::Length(1),
+                        Constraint::Min(1),
+                    ])
+                    .split(inner);
+                let active = Style::default().fg(Color::Green);
+                let inactive = Style::default().fg(Color::DarkGray);
+                let border = |is_active| if is_active { active } else { inactive };
+                let cursor = |is_active| if is_active { "█" } else { "" };
+                f.render_widget(
+                    Paragraph::new(format!(
+                        "{}{}",
+                        app.transaction_date,
+                        cursor(matches!(field, TransactionInputField::Date))
+                    ))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(" Date (YYYY-MM-DD) ")
+                            .border_style(border(matches!(field, TransactionInputField::Date))),
+                    ),
+                    areas[0],
+                );
+                f.render_widget(
+                    Paragraph::new(format!(
+                        "{}{}",
+                        app.input_description,
+                        cursor(matches!(field, TransactionInputField::Description))
+                    ))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(" Description ")
+                            .border_style(border(matches!(
+                                field,
+                                TransactionInputField::Description
+                            ))),
+                    ),
+                    areas[1],
+                );
+                f.render_widget(
+                    Paragraph::new(format!(
+                        "{}{}",
+                        app.input_amount,
+                        cursor(matches!(field, TransactionInputField::Amount))
+                    ))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(" Amount (PLN) ")
+                            .border_style(border(matches!(field, TransactionInputField::Amount))),
+                    ),
+                    areas[2],
+                );
+                let expense_style = if app.transaction_kind == TransactionKind::Expense {
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                } else {
+                    inactive
+                };
+                let income_style = if app.transaction_kind == TransactionKind::Income {
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    inactive
+                };
+                f.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(
+                            if app.transaction_kind == TransactionKind::Expense {
+                                " [ ▶ Expense ] "
+                            } else {
+                                " [   Expense ] "
+                            },
+                            expense_style,
+                        ),
+                        Span::raw("   "),
+                        Span::styled(
+                            if app.transaction_kind == TransactionKind::Income {
+                                "[ ▶ Income ] "
+                            } else {
+                                "[   Income ] "
+                            },
+                            income_style,
+                        ),
+                    ]))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(" Type ")
+                            .border_style(border(matches!(field, TransactionInputField::Kind))),
+                    ),
+                    areas[3],
+                );
+                f.render_widget(
+                    Paragraph::new(format!("  ◄  {}  ►", app.transaction_category.label()))
+                        .style(
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                        .block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .title(" Category ")
+                                .border_style(border(matches!(
+                                    field,
+                                    TransactionInputField::Category
+                                ))),
+                        ),
+                    areas[4],
+                );
+                if let Some(error) = &app.input_error {
+                    f.render_widget(
+                        Paragraph::new(error.as_str())
+                            .style(Style::default().fg(Color::Red))
+                            .alignment(Alignment::Center),
+                        areas[5],
+                    );
+                }
+                f.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled("Tab ", inactive),
+                        Span::raw("Next  "),
+                        Span::styled("←/→ ", inactive),
+                        Span::raw("Choose  "),
+                        Span::styled("Enter ", inactive),
+                        Span::raw("Save  "),
+                        Span::styled("Esc ", inactive),
+                        Span::raw("Cancel"),
+                    ]))
+                    .alignment(Alignment::Center),
+                    areas[6],
+                );
+            }
         })?;
 
-        if let Event::Key(key) = event::read()? {
+        let input_event = event::read()?;
+        if let Event::Mouse(mouse) = &input_event {
+            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                let size = terminal.size()?;
+                let in_header = mouse.row >= 1 && mouse.row <= 3;
+                let in_footer = mouse.row >= size.height.saturating_sub(4);
+                let month_names = [
+                    "January",
+                    "February",
+                    "March",
+                    "April",
+                    "May",
+                    "June",
+                    "July",
+                    "August",
+                    "September",
+                    "October",
+                    "November",
+                    "December",
+                ];
+                let month_title = format!(
+                    " PLAN   ◄  {} {}  ►   TRANSACTIONS ",
+                    month_names[app.current_month as usize - 1],
+                    app.current_year
+                );
+                let plan_help = " ◄ h Month l ►   j/k Select  i Add  Space Paid  t Category  d Delete  c Copy  b Balance  x Transactions  q Quit";
+                let transaction_help =
+                    "p Plan  h/l Month  j/k Select  a Add transaction  d Delete  q Quit";
+                let label_hit = |line: &str, label: &str, available_width: u16| {
+                    let line_width = line.chars().count() as u16;
+                    let start = 2 + available_width.saturating_sub(4 + line_width) / 2;
+                    line.find(label).is_some_and(|offset| {
+                        let label_start = start + line[..offset].chars().count() as u16;
+                        mouse.column >= label_start
+                            && mouse.column < label_start + label.chars().count() as u16
+                    })
+                };
+                if matches!(app.app_mode, AppMode::List)
+                    && ((in_header && label_hit(&month_title, "TRANSACTIONS", size.width))
+                        || (in_footer && label_hit(plan_help, "x Transactions", size.width)))
+                {
+                    app.app_mode = AppMode::Transactions;
+                    app.selected_expense = None;
+                } else if matches!(app.app_mode, AppMode::Transactions)
+                    && ((in_header && label_hit(&month_title, "PLAN", size.width))
+                        || (in_footer && label_hit(transaction_help, "p Plan", size.width)))
+                {
+                    app.app_mode = AppMode::List;
+                    app.selected_transaction = None;
+                }
+            }
+            continue;
+        }
+
+        if let Event::Key(key) = input_event {
             match app.input_mode {
                 InputMode::Normal => match key.code {
                     KeyCode::Char('q') => return Ok(()),
+                    KeyCode::Char('p') => {
+                        if matches!(app.app_mode, AppMode::Transactions) {
+                            app.app_mode = AppMode::List;
+                            app.selected_transaction = None;
+                        }
+                    }
+                    KeyCode::Char('x') => {
+                        if matches!(app.app_mode, AppMode::List | AppMode::Overview) {
+                            app.app_mode = AppMode::Transactions;
+                            app.selected_expense = None;
+                        }
+                    }
+                    KeyCode::Char('a') => {
+                        if matches!(app.app_mode, AppMode::Transactions) {
+                            app.input_mode =
+                                InputMode::AddingTransaction(TransactionInputField::Date);
+                            app.transaction_date =
+                                default_transaction_date(app.current_year, app.current_month);
+                            app.input_description.clear();
+                            app.input_amount.clear();
+                            app.transaction_kind = TransactionKind::Expense;
+                            app.transaction_category = TransactionCategory::Food;
+                            app.input_error = None;
+                        }
+                    }
                     KeyCode::Char('i') => {
                         if matches!(app.app_mode, AppMode::List) {
                             app.input_mode = InputMode::Adding(InputField::Description);
@@ -1344,6 +1988,16 @@ fn run_app<B: ratatui::backend::Backend>(
                                         }));
                                 }
                             }
+                        } else if matches!(app.app_mode, AppMode::Transactions) {
+                            let len = app
+                                .expense_manager
+                                .month_transactions(app.current_year, app.current_month)
+                                .len();
+                            if len > 0 {
+                                app.selected_transaction = Some(
+                                    app.selected_transaction.map_or(0, |i| (i + 1).min(len - 1)),
+                                );
+                            }
                         }
                     }
                     KeyCode::Char('k') | KeyCode::Up => {
@@ -1364,10 +2018,23 @@ fn run_app<B: ratatui::backend::Backend>(
                                     app.selected_expense = Some(0);
                                 }
                             }
+                        } else if matches!(app.app_mode, AppMode::Transactions) {
+                            let len = app
+                                .expense_manager
+                                .month_transactions(app.current_year, app.current_month)
+                                .len();
+                            if len > 0 {
+                                app.selected_transaction = Some(
+                                    app.selected_transaction.map_or(0, |i| i.saturating_sub(1)),
+                                );
+                            }
                         }
                     }
                     KeyCode::Char('h') | KeyCode::Left => {
-                        if matches!(app.app_mode, AppMode::List | AppMode::Overview) {
+                        if matches!(
+                            app.app_mode,
+                            AppMode::List | AppMode::Overview | AppMode::Transactions
+                        ) {
                             if app.current_month > 1 {
                                 app.current_month -= 1;
                             } else {
@@ -1375,10 +2042,14 @@ fn run_app<B: ratatui::backend::Backend>(
                                 app.current_year -= 1;
                             }
                             app.selected_expense = None;
+                            app.selected_transaction = None;
                         }
                     }
                     KeyCode::Char('l') | KeyCode::Right => {
-                        if matches!(app.app_mode, AppMode::List | AppMode::Overview) {
+                        if matches!(
+                            app.app_mode,
+                            AppMode::List | AppMode::Overview | AppMode::Transactions
+                        ) {
                             if app.current_month < 12 {
                                 app.current_month += 1;
                             } else {
@@ -1386,6 +2057,7 @@ fn run_app<B: ratatui::backend::Backend>(
                                 app.current_year += 1;
                             }
                             app.selected_expense = None;
+                            app.selected_transaction = None;
                         }
                     }
                     KeyCode::Char(' ') => {
@@ -1435,6 +2107,26 @@ fn run_app<B: ratatui::backend::Backend>(
                                     app.pending_delete_description = desc;
                                     app.pending_delete_amount = amount;
                                     app.app_mode = AppMode::ConfirmDelete;
+                                }
+                            }
+                        } else if matches!(app.app_mode, AppMode::Transactions) {
+                            if let Some(selected) = app.selected_transaction {
+                                let transaction_info = app
+                                    .expense_manager
+                                    .month_transactions(app.current_year, app.current_month)
+                                    .get(selected)
+                                    .map(|(index, transaction)| {
+                                        (
+                                            *index,
+                                            transaction.description.clone(),
+                                            transaction.amount,
+                                        )
+                                    });
+                                if let Some((index, description, amount)) = transaction_info {
+                                    app.pending_transaction_index = Some(index);
+                                    app.pending_delete_description = description;
+                                    app.pending_delete_amount = amount;
+                                    app.app_mode = AppMode::ConfirmDeleteTransaction;
                                 }
                             }
                         }
@@ -1515,6 +2207,12 @@ fn run_app<B: ratatui::backend::Backend>(
                             app.pending_delete_description.clear();
                             app.pending_delete_amount = 0.0;
                         }
+                        AppMode::ConfirmDeleteTransaction => {
+                            app.app_mode = AppMode::Transactions;
+                            app.pending_transaction_index = None;
+                            app.pending_delete_description.clear();
+                            app.pending_delete_amount = 0.0;
+                        }
                         _ => {}
                     },
                     KeyCode::Enter => {
@@ -1533,6 +2231,8 @@ fn run_app<B: ratatui::backend::Backend>(
                             }
                         } else if matches!(app.app_mode, AppMode::ConfirmDelete) {
                             confirm_delete(&mut app);
+                        } else if matches!(app.app_mode, AppMode::ConfirmDeleteTransaction) {
+                            confirm_transaction_delete(&mut app);
                         }
                     }
                     KeyCode::Char(c) => {
@@ -1549,6 +2249,17 @@ fn run_app<B: ratatui::backend::Backend>(
                                 'n' | 'N' => {
                                     app.app_mode = AppMode::List;
                                     app.pending_delete_index = None;
+                                    app.pending_delete_description.clear();
+                                    app.pending_delete_amount = 0.0;
+                                }
+                                _ => {}
+                            }
+                        } else if matches!(app.app_mode, AppMode::ConfirmDeleteTransaction) {
+                            match c {
+                                'y' | 'Y' => confirm_transaction_delete(&mut app),
+                                'n' | 'N' => {
+                                    app.app_mode = AppMode::Transactions;
+                                    app.pending_transaction_index = None;
                                     app.pending_delete_description.clear();
                                     app.pending_delete_amount = 0.0;
                                 }
@@ -1644,6 +2355,123 @@ fn run_app<B: ratatui::backend::Backend>(
                     }
                     _ => {}
                 },
+                InputMode::AddingTransaction(field) => match key.code {
+                    KeyCode::Esc => {
+                        app.input_mode = InputMode::Normal;
+                        app.input_error = None;
+                    }
+                    KeyCode::Tab => {
+                        app.input_error = None;
+                        app.input_mode = InputMode::AddingTransaction(match field {
+                            TransactionInputField::Date => TransactionInputField::Description,
+                            TransactionInputField::Description => TransactionInputField::Amount,
+                            TransactionInputField::Amount => TransactionInputField::Kind,
+                            TransactionInputField::Kind => TransactionInputField::Category,
+                            TransactionInputField::Category => TransactionInputField::Date,
+                        });
+                    }
+                    KeyCode::Enter => {
+                        let date =
+                            NaiveDate::parse_from_str(app.transaction_date.trim(), "%Y-%m-%d");
+                        let description = app.input_description.trim();
+                        let amount = parse_positive_amount(&app.input_amount);
+                        if date.is_err() {
+                            app.input_error =
+                                Some("Use a valid date in YYYY-MM-DD format.".to_string());
+                            app.input_mode =
+                                InputMode::AddingTransaction(TransactionInputField::Date);
+                        } else if description.is_empty() {
+                            app.input_error = Some("Add a description before saving.".to_string());
+                            app.input_mode =
+                                InputMode::AddingTransaction(TransactionInputField::Description);
+                        } else if amount.is_none() {
+                            app.input_error = Some("Enter an amount greater than 0.".to_string());
+                            app.input_mode =
+                                InputMode::AddingTransaction(TransactionInputField::Amount);
+                        } else if let (Ok(date), Some(amount)) = (date, amount) {
+                            let transaction = Transaction {
+                                date,
+                                description: description.to_string(),
+                                amount,
+                                kind: app.transaction_kind,
+                                category: if app.transaction_kind == TransactionKind::Income {
+                                    TransactionCategory::Income
+                                } else {
+                                    app.transaction_category
+                                },
+                            };
+                            let transaction_index =
+                                app.expense_manager.add_transaction(transaction);
+                            app.current_year = date.year();
+                            app.current_month = date.month();
+                            app.selected_transaction = app
+                                .expense_manager
+                                .month_transactions(app.current_year, app.current_month)
+                                .iter()
+                                .position(|(index, _)| *index == transaction_index);
+                            app.input_mode = InputMode::Normal;
+                            app.input_description.clear();
+                            app.input_amount.clear();
+                            app.input_error = None;
+                        }
+                    }
+                    KeyCode::Left => match field {
+                        TransactionInputField::Kind => {
+                            app.transaction_kind = app.transaction_kind.toggle()
+                        }
+                        TransactionInputField::Category => {
+                            app.transaction_category = app.transaction_category.previous()
+                        }
+                        _ => {}
+                    },
+                    KeyCode::Right => match field {
+                        TransactionInputField::Kind => {
+                            app.transaction_kind = app.transaction_kind.toggle()
+                        }
+                        TransactionInputField::Category => {
+                            app.transaction_category = app.transaction_category.next()
+                        }
+                        _ => {}
+                    },
+                    KeyCode::Char(c) => {
+                        match field {
+                            TransactionInputField::Date => {
+                                if c.is_ascii_digit() || c == '-' {
+                                    app.transaction_date.push(c);
+                                }
+                            }
+                            TransactionInputField::Description => app.input_description.push(c),
+                            TransactionInputField::Amount => {
+                                if c.is_ascii_digit() || c == '.' || c == ',' {
+                                    app.input_amount.push(c);
+                                }
+                            }
+                            TransactionInputField::Kind => {
+                                if c == ' ' {
+                                    app.transaction_kind = app.transaction_kind.toggle();
+                                }
+                            }
+                            TransactionInputField::Category => {}
+                        }
+                        app.input_error = None;
+                    }
+                    KeyCode::Backspace => {
+                        match field {
+                            TransactionInputField::Date => {
+                                app.transaction_date.pop();
+                            }
+                            TransactionInputField::Description => {
+                                app.input_description.pop();
+                            }
+                            TransactionInputField::Amount => {
+                                app.input_amount.pop();
+                            }
+                            _ => {}
+                        }
+                        app.input_error = None;
+                    }
+                    _ => {}
+                },
             }
         }
     }
@@ -1656,6 +2484,19 @@ fn parse_non_negative_amount(value: &str) -> Option<f64> {
 
 fn parse_positive_amount(value: &str) -> Option<f64> {
     parse_non_negative_amount(value).filter(|amount| *amount > 0.0)
+}
+
+fn default_transaction_date(year: i32, month: u32) -> String {
+    let today = Local::now().date_naive();
+    let preferred_day = if today.year() == year && today.month() == month {
+        today.day()
+    } else {
+        1
+    };
+    NaiveDate::from_ymd_opt(year, month, preferred_day)
+        .expect("the selected month is always valid")
+        .format("%Y-%m-%d")
+        .to_string()
 }
 
 fn confirm_delete(app: &mut App) {
@@ -1683,6 +2524,24 @@ fn confirm_delete(app: &mut App) {
     app.pending_delete_amount = 0.0;
 }
 
+fn confirm_transaction_delete(app: &mut App) {
+    if let Some(index) = app.pending_transaction_index.take() {
+        app.expense_manager.delete_transaction(index);
+    }
+    let len = app
+        .expense_manager
+        .month_transactions(app.current_year, app.current_month)
+        .len();
+    app.selected_transaction = match (app.selected_transaction, len) {
+        (_, 0) => None,
+        (Some(selected), len) => Some(selected.min(len - 1)),
+        _ => None,
+    };
+    app.pending_delete_description.clear();
+    app.pending_delete_amount = 0.0;
+    app.app_mode = AppMode::Transactions;
+}
+
 fn centered_dialog(max_width: u16, height: u16, area: Rect) -> Rect {
     let width = max_width.min(area.width.saturating_sub(2)).max(1);
     let height = height.min(area.height.saturating_sub(2)).max(1);
@@ -1696,7 +2555,12 @@ fn centered_dialog(max_width: u16, height: u16, area: Rect) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_non_negative_amount, parse_positive_amount};
+    use super::{
+        parse_non_negative_amount, parse_positive_amount, ExpenseManager, Transaction,
+        TransactionCategory, TransactionKind,
+    };
+    use chrono::NaiveDate;
+    use std::collections::HashMap;
 
     #[test]
     fn parses_amounts_with_dot_or_comma() {
@@ -1710,6 +2574,51 @@ mod tests {
         assert_eq!(parse_positive_amount("-5"), None);
         assert_eq!(parse_positive_amount("not a number"), None);
         assert_eq!(parse_non_negative_amount("NaN"), None);
+    }
+
+    #[test]
+    fn old_data_without_transactions_still_loads() {
+        let manager: ExpenseManager =
+            serde_json::from_str(r#"{"expenses":{},"balances":{},"balance_history":{}}"#).unwrap();
+        assert!(manager.transactions.is_empty());
+    }
+
+    #[test]
+    fn monthly_transactions_are_filtered_and_newest_first() {
+        let manager = ExpenseManager {
+            expenses: HashMap::new(),
+            balances: HashMap::new(),
+            balance_history: HashMap::new(),
+            transactions: vec![
+                Transaction {
+                    date: NaiveDate::from_ymd_opt(2026, 8, 31).unwrap(),
+                    description: "August".into(),
+                    amount: 1.0,
+                    kind: TransactionKind::Expense,
+                    category: TransactionCategory::Other,
+                },
+                Transaction {
+                    date: NaiveDate::from_ymd_opt(2026, 9, 2).unwrap(),
+                    description: "Later".into(),
+                    amount: 2.0,
+                    kind: TransactionKind::Income,
+                    category: TransactionCategory::Income,
+                },
+                Transaction {
+                    date: NaiveDate::from_ymd_opt(2026, 9, 1).unwrap(),
+                    description: "Earlier".into(),
+                    amount: 3.0,
+                    kind: TransactionKind::Expense,
+                    category: TransactionCategory::Food,
+                },
+            ],
+        };
+        let descriptions: Vec<_> = manager
+            .month_transactions(2026, 9)
+            .iter()
+            .map(|(_, transaction)| transaction.description.as_str())
+            .collect();
+        assert_eq!(descriptions, vec!["Later", "Earlier"]);
     }
 }
 
