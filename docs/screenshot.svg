@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">Recurring Costs terminal interface</title>
+  <desc id="desc">A monthly expense list beside an overview of funds, expense mix, and payment progress.</desc>
+  <rect width="1200" height="720" rx="18" fill="#0b0f14"/>
+  <rect x="1" y="1" width="1198" height="718" rx="17" fill="none" stroke="#29323d" stroke-width="2"/>
+  <circle cx="28" cy="27" r="7" fill="#ff5f57"/><circle cx="52" cy="27" r="7" fill="#febc2e"/><circle cx="76" cy="27" r="7" fill="#28c840"/>
+  <text x="600" y="32" text-anchor="middle" fill="#657180" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14">recurring_costs</text>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16">
+    <rect x="22" y="52" width="1156" height="50" fill="none" stroke="#34d8eb"/>
+    <text x="600" y="83" text-anchor="middle" fill="#34d8eb" font-weight="700">◄  September 2026  ►</text>
+    <rect x="22" y="116" width="748" height="530" fill="none" stroke="#6b7480"/>
+    <rect x="782" y="116" width="396" height="530" fill="none" stroke="#6b7480"/>
+    <rect x="42" y="109" width="100" height="18" fill="#0b0f14"/><text x="50" y="123" fill="#d7dde5">Expenses</text>
+    <rect x="800" y="109" width="100" height="18" fill="#0b0f14"/><text x="808" y="123" fill="#d7dde5">Overview</text>
+    <text x="48" y="156" fill="#657180">  Expense</text><text x="572" y="156" fill="#657180">Amount</text><text x="690" y="156" fill="#657180">Status</text>
+    <text x="48" y="190" fill="#34d8eb" font-weight="700">▸ NEEDS</text>
+    <text x="48" y="222" fill="#f5c451" font-weight="700">▶ Rent</text><text x="572" y="222" fill="#f5c451">3200.00</text><text x="690" y="222" fill="#f5c451">✓  paid</text>
+    <text x="48" y="254" fill="#d7dde5">  Electricity</text><text x="572" y="254" fill="#d7dde5">186.40</text><text x="690" y="254" fill="#d7dde5">✗  due</text>
+    <text x="48" y="286" fill="#657180">  Internet</text><text x="572" y="286" fill="#657180">79.00</text><text x="690" y="286" fill="#657180">✓  paid</text>
+    <text x="48" y="318" fill="#d7dde5">  Groceries</text><text x="572" y="318" fill="#d7dde5">950.00</text><text x="690" y="318" fill="#d7dde5">✗  due</text>
+    <text x="48" y="362" fill="#f5c451" font-weight="700">▸ WANTS</text>
+    <text x="48" y="394" fill="#657180">  Music</text><text x="572" y="394" fill="#657180">23.99</text><text x="690" y="394" fill="#657180">✓  paid</text>
+    <text x="48" y="426" fill="#d7dde5">  Restaurants</text><text x="572" y="426" fill="#d7dde5">420.00</text><text x="690" y="426" fill="#d7dde5">✗  due</text>
+    <text x="48" y="458" fill="#d7dde5">  Weekend trip</text><text x="572" y="458" fill="#d7dde5">650.00</text><text x="690" y="458" fill="#d7dde5">✗  due</text>
+    <text x="806" y="156" fill="#657180" font-weight="700">FUNDS</text>
+    <text x="806" y="190" fill="#657180">Balance</text><text x="1154" y="190" text-anchor="end" fill="#d7dde5" font-weight="700">8200.00 PLN</text>
+    <text x="806" y="222" fill="#657180">Free money</text><text x="1154" y="222" text-anchor="end" fill="#5cdb95" font-weight="700">5993.60 PLN</text>
+    <line x1="806" y1="247" x2="1154" y2="247" stroke="#3b4551"/>
+    <text x="806" y="280" fill="#657180" font-weight="700">EXPENSE MIX</text>
+    <text x="806" y="314" fill="#34d8eb" font-weight="700">Needs</text><text x="1154" y="314" text-anchor="end" fill="#34d8eb">4415.40 PLN</text>
+    <text x="806" y="342" fill="#34d8eb">█████████████████████████░░░░░░  80%</text>
+    <text x="806" y="380" fill="#f5c451" font-weight="700">Wants</text><text x="1154" y="380" text-anchor="end" fill="#f5c451">1093.99 PLN</text>
+    <text x="806" y="408" fill="#f5c451">██████░░░░░░░░░░░░░░░░░░░░░░░  20%</text>
+    <line x1="806" y1="435" x2="1154" y2="435" stroke="#3b4551"/>
+    <text x="806" y="468" fill="#657180" font-weight="700">PAYMENTS</text>
+    <text x="806" y="502" fill="#657180">Paid</text><text x="1154" y="502" text-anchor="end" fill="#5cdb95">3302.99 PLN</text>
+    <text x="806" y="534" fill="#657180">Still due</text><text x="1154" y="534" text-anchor="end" fill="#ff6b6b">2206.40 PLN</text>
+    <text x="806" y="572" fill="#f5c451">███████████████████░░░░░░░░░░░░  60%</text>
+    <text x="806" y="600" fill="#657180">monthly expenses paid</text>
+    <rect x="22" y="660" width="1156" height="38" fill="none" stroke="#6b7480"/>
+    <text x="600" y="685" text-anchor="middle" fill="#657180">◄ h Month l ►   j/k Select   i Add   Space Paid   t Category   d Delete   c Copy   b Balance   q Quit</text>
+  </g>
+</svg>

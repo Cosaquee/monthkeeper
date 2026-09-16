@@ -1,104 +1,92 @@
-# Recurring Costs Manager (TUI)
+# Recurring Costs
 
-A terminal-based expense tracking application written in Rust, featuring a clean and intuitive Text User Interface (TUI). Keep track of your monthly expenses, monitor your balance, and manage recurring payments with ease.
+A fast, keyboard-first expense tracker for the terminal. Recurring Costs keeps each month’s bills, available balance, spending mix, and payment progress together in a focused Ratatui interface.
 
-![TUI Screenshot Placeholder]
+![Recurring Costs main view](docs/screenshot.svg)
 
-## Features
+## Highlights
 
-### 💰 Financial Management
-- Track monthly recurring expenses
-- Set and monitor your available balance
-- View free money after accounting for unpaid expenses
-- Mark expenses as paid/unpaid
-- Historical balance tracking
+- Organize expenses by month and by **Need** or **Want**.
+- Mark bills as paid without removing them from the monthly plan.
+- See balance, free money, category split, and payment progress at a glance.
+- Copy a recurring expense into the following month.
+- Keep a history of balance updates.
+- Use Vim keys or arrow keys throughout the interface.
+- Store data locally—no account, server, or network connection required.
 
-### 📊 Financial Overview
-- Split view of available funds and monthly expenses
-- Color-coded financial status indicators
-- Payment progress tracking
-- Monthly expense summaries
-- Balance history log
+## Getting started
 
-### 🎯 User Experience
-- Vim-style navigation (with arrow key support)
-- Clean, intuitive interface
-- Real-time updates
-- Persistent data storage
-- Monthly navigation
+You’ll need a recent Rust toolchain and a terminal with Unicode support.
 
-## 🚀 Quick Start
-
-### Prerequisites
-- Rust and Cargo installed on your system
-- Terminal with Unicode support
-
-### Installation
-
-1. Clone the repository:
-```bash
-git clone [repository-url]
-cd recurring-costs
-```
-
-2. Build the project:
-```bash
-cargo build --release
-```
-
-3. Run the application:
-```bash
+```sh
+git clone <repository-url>
+cd expense-tracker
 cargo run --release
 ```
 
-## 🎮 Controls
+To build a standalone binary instead:
 
-### Main List View
-- `j` or `↓`: Move selection down
-- `k` or `↑`: Move selection up
-- `h` or `←`: Previous month
-- `l` or `→`: Next month
-- `Space`: Toggle selected expense paid/unpaid
-- `i`: Add new expense
-- `o`: Switch to Overview mode
-- `q`: Quit application
+```sh
+cargo build --release
+./target/release/recurring_costs
+```
 
-### Overview Mode
-- `b`: Enter balance input mode
-- `H`: View balance history
-- `Esc`: Return to list mode
+## Controls
 
-### Input Mode
-- `Tab`: Switch between input fields
-- `Enter`: Save input
-- `Esc`: Cancel input
+### Expense list
 
-## 💾 Data Storage
+| Key | Action |
+| --- | --- |
+| `j` / `↓`, `k` / `↑` | Select an expense |
+| `h` / `←`, `l` / `→` | Move between months |
+| `Space` | Mark the selected expense paid or unpaid |
+| `i` | Add an expense |
+| `t` | Switch the selected expense between Need and Want |
+| `c` | Copy the selected expense to the next month |
+| `d` | Delete the selected expense |
+| `b` | Update the month’s balance |
+| `o` | Open the full overview |
+| `q` | Quit |
 
-The application automatically saves your data in:
+### Overview and history
+
+| Key | Action |
+| --- | --- |
+| `b` | Update the balance |
+| `H` | Open balance history |
+| `Esc` | Go back |
+| `q` | Quit |
+
+### Dialogs
+
+Use `Tab` to move between expense fields, the arrow keys or `n` / `w` to choose a category, `Enter` to save, and `Esc` to cancel. Amounts accept either a decimal point or comma.
+
+## Local data
+
+The application saves `expenses_data.json` and its log inside the platform data directory:
+
 - macOS: `~/Library/Application Support/recurring_costs/`
 - Linux: `~/.local/share/recurring_costs/`
 - Windows: `%APPDATA%/recurring_costs/`
 
-## 📦 Dependencies
+Back up `expenses_data.json` if you want to move your data to another machine.
 
-- `ratatui`: Terminal user interface library
-- `crossterm`: Terminal manipulation
-- `serde`: Serialization framework
-- `chrono`: Date and time functionality
+## Built with
 
-## 🤝 Contributing
+- [Ratatui](https://ratatui.rs/) for the terminal UI
+- [Crossterm](https://github.com/crossterm-rs/crossterm) for terminal input and output
+- [Serde](https://serde.rs/) for local data serialization
+- [Chrono](https://github.com/chronotope/chrono) for dates and balance history
 
-Contributions are welcome! Feel free to:
-- Report bugs
-- Suggest new features
-- Submit pull requests
+## Contributing
 
-## 📝 License
+Bug reports, feature ideas, and pull requests are welcome. Before opening a pull request, run:
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+```sh
+cargo fmt -- --check
+cargo test
+```
 
-## 🙏 Acknowledgments
+## License
 
-- Built with [Ratatui](https://github.com/tui-rs-revival/ratatui)
-- Inspired by various TUI applications in the Rust ecosystem
+Licensed under the [MIT License](LICENSE).
