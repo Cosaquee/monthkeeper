@@ -12,8 +12,12 @@ A fast, keyboard-first expense tracker for the terminal. Recurring Costs keeps e
 - Copy a recurring expense into the following month.
 - Keep a history of balance updates.
 - Optionally keep a separate, dated transaction ledger for actual cash activity.
-- Record both spending and income across practical or user-created categories.
+- Record and edit both spending and income across practical or user-created categories.
+- Browse transactions for a month or across the entire ledger, with automatic table scrolling.
 - Review monthly spending totals grouped by category.
+- Create, rename, and safely delete transaction categories; categories in use cannot be deleted.
+- Filter categories with autocomplete while entering transactions.
+- Open an in-app keyboard reference with `?`.
 - Compare recorded spending with the monthly plan without changing the plan.
 - Use Vim keys or arrow keys throughout the interface.
 - Store data locally—no account, server, or network connection required.
@@ -37,7 +41,9 @@ cargo build --release
 
 ## Controls
 
-Press `?` from any screen to open the complete keyboard shortcut reference. Press `Esc` to return.
+Press `?` from any normal screen to open the complete keyboard shortcut reference. Press `Esc` to return.
+
+`Shift+H` and `Shift+L` move through the top-level screens in either direction: Plan, Transactions, and Categories. Lowercase `h` and `l` continue to move between months where applicable.
 
 ### Expense list
 
@@ -72,7 +78,7 @@ Transaction tracking is an optional, separate workflow. Nothing recorded in the 
 | `Shift+H` / `Shift+L` | Move between Plan, Transactions, and Categories |
 | `q` | Quit |
 
-The transaction form records a date, description, positive amount, type (expense or income), and category. Type into the category field to filter it, then use `j/k` or `↑/↓` to select a match. Use `Tab` between fields, `Enter` to save, and `Esc` to cancel. New categories can apply to expenses, income, or both.
+The transaction form records a date, description, positive amount, type (expense or income), and category. Type into the category field to filter it, then use `j/k` or `↑/↓` to select a match. Use `Tab` between fields, `Enter` to save, and `Esc` to cancel. New categories can apply to expenses, income, or both. The all-transactions view keeps the selected row visible while navigating long ledgers.
 
 ### Categories
 
@@ -89,7 +95,15 @@ The Categories screen lists every category, whether it applies to expenses or in
 
 ### Dialogs
 
-Use `Tab` to move between expense fields, the arrow keys or `n` / `w` to choose a category, `Enter` to save, and `Esc` to cancel. Amounts accept either a decimal point or comma.
+Use `Tab` to move between expense fields, the arrow keys or `n` / `w` to choose Need/Want, `Enter` to save, and `Esc` to cancel. Amounts accept either a decimal point or comma.
+
+### Continuous integration
+
+Pull requests targeting `main` run the full Rust test suite automatically through GitHub Actions. Run it locally with:
+
+```sh
+cargo test --all-targets
+```
 
 ## Local data
 
