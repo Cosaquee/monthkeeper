@@ -1,26 +1,21 @@
 # Recurring Costs
 
-A fast, keyboard-first expense tracker for the terminal. Recurring Costs keeps each month’s bills, available balance, spending mix, and payment progress together in a focused Ratatui interface.
+A fast, keyboard-first expense tracker for the terminal. Recurring Costs brings a monthly bill planner, an optional transaction ledger, and customizable categories together in a focused Ratatui interface. Track what is due, record what you actually spend or earn, and compare the two.
 
-![Recurring Costs main view](docs/screenshot.svg)
+![Monthly plan with Need and Want groups, balance, and payment progress](docs/screenshot.svg)
+
+*Plan view with sample data. Free money is the month’s balance minus unpaid planned expenses.*
 
 ## Highlights
 
-- Organize expenses by month and by **Need** or **Want**.
-- Mark bills as paid without removing them from the monthly plan.
-- See balance, free money, category split, and payment progress at a glance.
-- Copy a recurring expense into the following month.
-- Keep a history of balance updates.
-- Optionally keep a separate, dated transaction ledger for actual cash activity.
-- Record and edit both spending and income across practical or user-created categories.
-- Browse transactions for a month or across the entire ledger, with automatic table scrolling.
-- Review monthly spending totals grouped by category.
-- Create, rename, and safely delete transaction categories; categories in use cannot be deleted.
-- Filter categories with autocomplete while entering transactions.
-- Open an in-app keyboard reference with `?`.
-- Compare recorded spending with the monthly plan without changing the plan.
-- Use Vim keys or arrow keys throughout the interface.
-- Store data locally—no account, server, or network connection required.
+- **Monthly plan:** group bills into Need and Want, mark them paid, and copy individual recurring expenses to the next month.
+- **Balance overview:** see free money, spending mix, payment progress, and a history of balance updates.
+- **Transaction ledger:** record and edit dated expenses and income, browse a month or the full ledger, and scroll through long lists.
+- **Cash-flow summary:** see spending, income, net flow, the top six spending categories, and recorded spending as a percentage of the monthly plan.
+- **Custom categories:** create and rename categories for expenses, income, or both; categories in use are protected from deletion.
+- **Category picker:** filter compatible categories while entering a transaction, with a scrolling list that keeps the selection visible.
+- **Keyboard navigation:** use Vim keys or arrows, switch screens with `Shift+H/L`, and open the shortcut reference with `?`.
+- **Local storage:** no account, server, or network connection required.
 
 ## Getting started
 
@@ -45,7 +40,7 @@ Press `?` from any normal screen to open the complete keyboard shortcut referenc
 
 `Shift+H` and `Shift+L` move through the top-level screens in either direction: Plan, Transactions, and Categories. Lowercase `h` and `l` continue to move between months where applicable.
 
-### Expense list
+### Plan
 
 | Key | Action |
 | --- | --- |
@@ -78,7 +73,13 @@ Transaction tracking is an optional, separate workflow. Nothing recorded in the 
 | `Shift+H` / `Shift+L` | Move between Plan, Transactions, and Categories |
 | `q` | Quit |
 
-The transaction form records a date, description, positive amount, type (expense or income), and category. Type into the category field to filter it, then use `j/k` or `↑/↓` to select a match. Use `Tab` between fields, `Enter` to save, and `Esc` to cancel. New categories can apply to expenses, income, or both. The all-transactions view keeps the selected row visible while navigating long ledgers.
+![Transactions with dated entries, income and spending totals, and plan comparison](docs/transactions.svg)
+
+*Transaction view using sample data. The sidebar follows the selected month or the full ledger; plan comparison appears only in monthly mode.*
+
+The transaction form records a date (`YYYY-MM-DD`), description, positive amount, type (expense or income), and category. In the type field, use `Space` or `←/→` to switch between expense and income. Use `Tab` between fields, `Enter` to save, and `Esc` to cancel.
+
+Type into the category field to filter it, then use `j/k` or `↑/↓` to select a match. The picker shows categories compatible with the selected type and keeps the highlighted match visible as you scroll. New categories can apply to expenses, income, or both. The all-transactions view keeps the selected row visible while navigating long ledgers.
 
 ### Categories
 
@@ -86,10 +87,12 @@ The Categories screen lists every category, whether it applies to expenses or in
 
 ### Overview and history
 
+From Plan, press `o` for the full overview, then `Shift+H` for the selected month’s balance history. History records the balance, total planned expenses, unpaid expenses, and remaining funds at each balance update.
+
 | Key | Action |
 | --- | --- |
 | `b` | Update the balance |
-| `H` | Open balance history |
+| `Shift+H` | Open balance history from the overview |
 | `Esc` | Go back |
 | `q` | Quit |
 
@@ -97,7 +100,7 @@ The Categories screen lists every category, whether it applies to expenses or in
 
 Use `Tab` to move between expense fields, the arrow keys or `n` / `w` to choose Need/Want, `Enter` to save, and `Esc` to cancel. Amounts accept either a decimal point or comma.
 
-### Continuous integration
+## Development
 
 Pull requests targeting `main` run the full Rust test suite automatically through GitHub Actions. Run it locally with:
 
@@ -113,7 +116,7 @@ The application saves `expenses_data.json` and its log inside the platform data 
 - Linux: `~/.local/share/recurring_costs/`
 - Windows: `%APPDATA%/recurring_costs/`
 
-Back up `expenses_data.json` if you want to move your data to another machine.
+The JSON file contains monthly plans, balances and their history, transactions, and transaction categories. Back up `expenses_data.json` if you want to move your data to another machine.
 
 ## Built with
 
