@@ -763,6 +763,17 @@ impl App {
             .filter(|category| query.is_empty() || category.name.to_lowercase().contains(&query))
             .collect()
     }
+
+    fn transaction_category_window_start(&self, visible_count: usize) -> usize {
+        let available = self.filtered_transaction_categories();
+        let selected = available
+            .iter()
+            .position(|category| category.id == self.transaction_category_id)
+            .unwrap_or(0);
+        selected
+            .saturating_sub(visible_count.saturating_sub(1))
+            .min(available.len().saturating_sub(visible_count))
+    }
 }
 
 fn run_app<B: ratatui::backend::Backend>(
@@ -2150,7 +2161,7 @@ fn run_app<B: ratatui::backend::Backend>(
             }
 
             if let InputMode::AddingTransaction(field) = app.input_mode {
-                let popup = centered_dialog(68, 26, f.size());
+                let popup = centered_dialog(68, 30, f.size());
                 f.render_widget(Clear, popup);
                 f.render_widget(
                     Block::default().style(Style::default().bg(Color::Black)),
@@ -2171,11 +2182,11 @@ fn run_app<B: ratatui::backend::Backend>(
                     .direction(Direction::Vertical)
                     .margin(1)
                     .constraints([
+                        Constraint::Length(3),
+                        Constraint::Length(3),
+                        Constraint::Length(3),
+                        Constraint::Length(3),
                         Constraint::Length(7),
-                        Constraint::Length(3),
-                        Constraint::Length(3),
-                        Constraint::Length(3),
-                        Constraint::Length(3),
                         Constraint::Length(1),
                         Constraint::Min(1),
                     ])
@@ -2270,12 +2281,13 @@ fn run_app<B: ratatui::backend::Backend>(
                     areas[3],
                 );
                 let matches = app.filtered_transaction_categories();
+                let category_window_start = app.transaction_category_window_start(4);
                 let mut category_lines = vec![Line::from(format!(
                     " Search: {}{}",
                     app.transaction_category_query,
                     cursor(matches!(field, TransactionInputField::Category))
                 ))];
-                for category in matches.iter().take(4) {
+                for category in matches.iter().skip(category_window_start).take(4) {
                     category_lines.push(Line::from(format!(
                         " {} {}",
                         if category.id == app.transaction_category_id { "▶" } else { " " },
@@ -3419,6 +3431,9 @@ mod tests {
         app.transaction_category_id = "food".into();
         app.cycle_transaction_category(true);
         assert_eq!(app.transaction_category_id, "home");
+
+        app.transaction_category_id = "health".into();
+        assert_eq!(app.transaction_category_window_start(4), 1);
     }
 
     #[test]
